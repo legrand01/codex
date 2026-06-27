@@ -1,0 +1,34 @@
+# Backend Dockerfile - Autonomous Postgres DBA Agent Platform
+# Multi-stage build for production-ready image
+
+FROM python:3.11-slim AS base
+
+WORKDIR /app
+
+# Install system dependencies (curl for health checks)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies first for layer caching
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir . 2>/dev/null || pip install --no-cache-dir -e .
+
+# Copy application code
+COPY backend/ ./backend/
+COPY host-agent/ ./host-agent/
+
+# Create non-root user for security
+RUN adduser --disabled-password --gecos "" appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE 8000
+
+# Health check - must respond HTTP 200 within 30 seconds of container start
+HEALTHCHECK --interval=5s --timeout=5s --start-period=15s --retries=6 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run application with production settings
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--access-log"]

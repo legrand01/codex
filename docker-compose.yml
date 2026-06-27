@@ -1,0 +1,110 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/dba_agent
+      - REDIS_URL=redis://redis:6379/0
+      - DEBUG=${DEBUG:-false}
+      - DEMO_MODE=${DEMO_MODE:-false}
+      - HOST=0.0.0.0
+      - PORT=8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  host-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    command: ["python", "host-agent/agent.py"]
+    profiles: ["host-agent"]
+    environment:
+      - CONTROL_PLANE_URL=http://app:8000
+      - AGENT_HOST_ID=${AGENT_HOST_ID:-}
+      - AGENT_HOSTNAME=${AGENT_HOSTNAME:-w2j}
+      - PG_CONNECTION_STRING=${PG_CONNECTION_STRING:-postgresql://pgai_user@host.docker.internal:5444/w2jmon_test?sslmode=require}
+      - PG_SETTINGS_INTERVAL=${PG_SETTINGS_INTERVAL:-60}
+      - PG_STATS_INTERVAL=${PG_STATS_INTERVAL:-30}
+      - LOCKS_REPLICATION_INTERVAL=${LOCKS_REPLICATION_INTERVAL:-15}
+      - OS_METRICS_INTERVAL=${OS_METRICS_INTERVAL:-15}
+      - MAX_QUERY_ENTRIES=${MAX_QUERY_ENTRIES:-100}
+      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-30}
+    depends_on:
+      app:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-dba_agent}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,460 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Initialize project structure and configuration files": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478232
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225485637
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225734786
+      }
+    ],
+    "1.2 Create database schema and migration files": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478264
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225738305
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225919238
+      }
+    ],
+    "1.3 Implement core data models and Pydantic schemas": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478282
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225739103
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225919977
+      }
+    ],
+    "1.4 Implement database connection pool and repository base": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478291
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225925770
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226100323
+      }
+    ],
+    "2.1 Implement Fleet API endpoints": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478306
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226117414
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226534370
+      }
+    ],
+    "2.2 Implement heartbeat processing and health status logic": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478313
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226118223
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226535147
+      }
+    ],
+    "2.5 Implement WebSocket for fleet status updates": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478326
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226538810
+      },
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226677571
+      }
+    ],
+    "3. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478332
+      }
+    ],
+    "4.1 Implement Audit Logger service": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478339
+      }
+    ],
+    "4.2 Implement secrets redaction function": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478351
+      }
+    ],
+    "5.1 Implement Host Agent core service": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478357
+      }
+    ],
+    "5.2 Implement local evidence buffering and flush logic": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478363
+      }
+    ],
+    "5.6 Implement Evidence API endpoints": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478373
+      }
+    ],
+    "6. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478378
+      }
+    ],
+    "7.1 Implement allowlist enforcement": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478384
+      }
+    ],
+    "7.4 Implement risk score calculation": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478399
+      }
+    ],
+    "7.7 Implement dry-run execution": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478405
+      }
+    ],
+    "7.8 Implement rollback plan validation": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478411
+      }
+    ],
+    "7.10 Implement safety workflow orchestration": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478417
+      }
+    ],
+    "8.1 Implement Plans API endpoints": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478431
+      }
+    ],
+    "8.2 Implement plan approval workflow": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478438
+      }
+    ],
+    "8.3 Implement plan rejection workflow": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478444
+      }
+    ],
+    "9. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478457
+      }
+    ],
+    "10.1 Implement Rollback API endpoints": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478463
+      }
+    ],
+    "10.2 Implement rollback eligibility and error handling": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478470
+      }
+    ],
+    "11.1 Implement AI Planning Module core": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478485
+      }
+    ],
+    "11.2 Implement evidence quality checking": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478492
+      }
+    ],
+    "11.3 Implement rollback instruction generation": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478498
+      }
+    ],
+    "12.1 Implement DBA Loop Worker core execution engine": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478510
+      }
+    ],
+    "12.2 Implement approval gate and guardrail integration": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478516
+      }
+    ],
+    "12.3 Implement loop halt and error handling": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478522
+      }
+    ],
+    "12.6 Implement Runs API endpoints": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478534
+      }
+    ],
+    "13.1 Implement post-apply verification logic": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478540
+      }
+    ],
+    "13.2 Implement automatic rollback decision": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478546
+      }
+    ],
+    "14. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478559
+      }
+    ],
+    "15.1 Implement DBA Report generation": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478566
+      }
+    ],
+    "15.2 Implement Reports API and search": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478572
+      }
+    ],
+    "16.1 Implement Demo Mode activation and seed data": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478578
+      }
+    ],
+    "16.2 Implement Demo Mode isolation and connection blocking": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478583
+      }
+    ],
+    "17.1 Implement frontend project structure and shared components": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478591
+      }
+    ],
+    "17.2 Implement Fleet Overview page": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478598
+      }
+    ],
+    "17.3 Implement Active Runs monitoring page": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478603
+      }
+    ],
+    "17.4 Implement Evidence Viewer page": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478609
+      }
+    ],
+    "17.5 Implement Plan Approval Queue page": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478614
+      }
+    ],
+    "17.6 Implement Rollback Controls and Audit Log pages": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478620
+      }
+    ],
+    "18. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478628
+      }
+    ],
+    "19.1 Wire DBA Loop Worker with all services": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478633
+      }
+    ],
+    "19.2 Wire frontend to backend API and WebSocket": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478638
+      }
+    ],
+    "20.1 Finalize Docker and docker-compose configuration": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478643
+      }
+    ],
+    "20.2 Create automated test suite runner": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478647
+      }
+    ],
+    "20.3 Create README documentation": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478652
+      }
+    ],
+    "20.4 Create deployment script": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478657
+      }
+    ],
+    "21. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782225478662
+      }
+    ],
+    "1. Project scaffolding and core infrastructure": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226100328
+      }
+    ],
+    "2. Fleet management and host registration": [
+      {
+        "executionId": "973bbf5a-8f25-4c05-9f9b-32ed3dfd9e04",
+        "chatSessionId": "ee3905d5-ff6b-463f-965f-1b8c11b68b6e",
+        "timestamp": 1782226677578
+      }
+    ]
+  }
+}
