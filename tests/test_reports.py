@@ -18,7 +18,6 @@ from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
 from backend.services.report_generator import (
-    DEFAULT_CONFIDENCE_THRESHOLD,
     LABEL_AI_RECOMMENDATION,
     LABEL_INCONCLUSIVE,
     LABEL_VERIFIED_FACT,
@@ -38,7 +37,6 @@ class AsyncContextManager:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         return False
-
 
 
 # =============================================================================
@@ -65,7 +63,6 @@ class TestReportGeneratorBuildMethods:
     def setup_method(self):
         """Set up test fixtures."""
         self.generator = ReportGenerator(pool=MagicMock())
-
 
     def test_build_evidence_summaries_verified_fact(self):
         """Evidence above threshold is labeled VERIFIED_FACT."""
@@ -96,7 +93,6 @@ class TestReportGeneratorBuildMethods:
         assert len(summaries) == 1
         assert summaries[0]["provenance"] == LABEL_INCONCLUSIVE
         assert "evidence_gap" in summaries[0]
-
 
     def test_build_evidence_summaries_null_quality_score(self):
         """Evidence with null quality_score is treated as 0.0 (INCONCLUSIVE)."""
@@ -129,7 +125,6 @@ class TestReportGeneratorBuildMethods:
         assert len(proposed) == 1
         assert proposed[0]["provenance"] == LABEL_AI_RECOMMENDATION
         assert "evidence_gap" not in proposed[0]
-
 
     def test_build_plans_proposed_inconclusive(self):
         """Plans with confidence below threshold marked INCONCLUSIVE."""
@@ -166,7 +161,6 @@ class TestReportGeneratorBuildMethods:
         assert decisions[0]["decision"] == "approved"
         assert decisions[0]["provenance"] == LABEL_VERIFIED_FACT
 
-
     def test_build_approval_decisions_rejected(self):
         """Rejected plans produce VERIFIED_FACT rejection decision."""
         plans = [
@@ -202,7 +196,6 @@ class TestReportGeneratorBuildMethods:
         assert changes[0]["provenance"] == LABEL_VERIFIED_FACT
         assert changes[0]["rolled_back"] is False
 
-
     def test_build_applied_changes_rolled_back(self):
         """Rolled back plans are marked as such."""
         now = datetime.now(timezone.utc)
@@ -237,7 +230,6 @@ class TestReportGeneratorBuildMethods:
         assert results[0]["provenance"] == LABEL_VERIFIED_FACT
         assert results[0]["result"] == "success"
 
-
     def test_build_verification_results_no_verification_entries(self):
         """Non-verification entries are excluded."""
         audit_entries = [
@@ -269,7 +261,6 @@ class TestOutcomeStatus:
         run = {"status": "completed"}
         assert self.generator._determine_outcome_status(run, []) == "success"
 
-
     def test_completed_run_with_applied_plans_is_success(self):
         """Completed run with successfully applied plans is success."""
         run = {"status": "completed"}
@@ -298,7 +289,6 @@ class TestOutcomeStatus:
         """Failed run produces failure outcome."""
         run = {"status": "failed"}
         assert self.generator._determine_outcome_status(run, []) == "failure"
-
 
     def test_timed_out_run_is_failure(self):
         """Timed out run produces failure outcome."""
@@ -331,7 +321,6 @@ class TestGetReportEndpoint:
         run_id = uuid4()
         report_id = uuid4()
         now = datetime.now(timezone.utc)
-
 
         report_content = {
             "evidence_summaries": [{"type": "pg_settings", "provenance": "VERIFIED_FACT"}],
@@ -367,7 +356,6 @@ class TestGetReportEndpoint:
         assert data["outcome_status"] == "success"
         assert len(data["evidence_summaries"]) == 1
 
-
     @pytest.mark.asyncio
     async def test_get_report_not_found_generation_fails(self, client):
         """Returns 404 when no report exists and generation fails."""
@@ -379,9 +367,7 @@ class TestGetReportEndpoint:
         mock_pool.acquire = MagicMock(return_value=AsyncContextManager(mock_conn))
 
         mock_gen = AsyncMock()
-        mock_gen.generate_report = AsyncMock(
-            side_effect=ReportGenerationError("Run not found")
-        )
+        mock_gen.generate_report = AsyncMock(side_effect=ReportGenerationError("Run not found"))
 
         with patch("backend.api.reports.get_pool", return_value=mock_pool):
             with patch("backend.api.reports.get_report_generator", return_value=mock_gen):
@@ -405,7 +391,6 @@ class TestGetReportEndpoint:
         with patch("backend.api.reports.get_pool", return_value=None):
             response = await client.get(f"/api/v1/reports/{run_id}")
         assert response.status_code == 503
-
 
 
 # =============================================================================
@@ -450,7 +435,6 @@ class TestSearchReportsEndpoint:
         assert len(data["reports"]) == 1
         assert data["reports"][0]["goal"] == "Optimize performance"
 
-
     @pytest.mark.asyncio
     async def test_search_with_keywords(self, client):
         """Search with keywords filters by goal text."""
@@ -461,9 +445,7 @@ class TestSearchReportsEndpoint:
         mock_pool.acquire = MagicMock(return_value=AsyncContextManager(mock_conn))
 
         with patch("backend.api.reports.get_pool", return_value=mock_pool):
-            response = await client.get(
-                "/api/v1/reports/search?keywords=optimize+performance"
-            )
+            response = await client.get("/api/v1/reports/search?keywords=optimize+performance")
 
         assert response.status_code == 200
         data = response.json()

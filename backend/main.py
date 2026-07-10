@@ -8,6 +8,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.audit import router as audit_router
+from backend.api.demo import router as demo_router
+from backend.api.evidence import router as evidence_router
+from backend.api.fleet import router as fleet_router
+from backend.api.plans import router as plans_router
+from backend.api.reports import router as reports_router
+from backend.api.rollback import router as rollback_router
+from backend.api.runs import router as runs_router
+from backend.api.ws_fleet import router as ws_fleet_router
 from backend.config import settings
 
 logger = logging.getLogger(__name__)
@@ -69,17 +78,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Register API routers
-from backend.api.fleet import router as fleet_router
-from backend.api.ws_fleet import router as ws_fleet_router
-from backend.api.audit import router as audit_router
-from backend.api.evidence import router as evidence_router
-from backend.api.rollback import router as rollback_router
-from backend.api.plans import router as plans_router
-from backend.api.runs import router as runs_router
-from backend.api.reports import router as reports_router
-from backend.api.demo import router as demo_router
 
 app.include_router(fleet_router)
 app.include_router(ws_fleet_router)

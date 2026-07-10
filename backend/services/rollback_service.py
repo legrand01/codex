@@ -10,7 +10,6 @@ Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
 """
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from enum import Enum
@@ -145,9 +144,7 @@ def validate_rollback_instructions(rollback_instructions: Optional[List]) -> Lis
         )
 
     if len(rollback_instructions) == 0:
-        raise RollbackInstructionsError(
-            "Rollback instructions are empty. Cannot execute rollback."
-        )
+        raise RollbackInstructionsError("Rollback instructions are empty. Cannot execute rollback.")
 
     # Validate each instruction is a dict with required fields
     for i, instruction in enumerate(rollback_instructions):
@@ -194,7 +191,6 @@ async def execute_rollback(
         )
         return result
     except asyncio.TimeoutError:
-        completed_at = datetime.now(timezone.utc)
         raise RollbackTimeoutError(
             f"Rollback for plan {plan_id} exceeded {timeout} second timeout."
         )
@@ -229,8 +225,7 @@ async def _execute_instructions(
         # e.g., ALTER SYSTEM SET setting_name = restore_value;
         # followed by SELECT pg_reload_conf();
         logger.info(
-            f"Executing rollback step {i + 1}/{len(instructions)} "
-            f"for plan {plan_id}: {instruction}"
+            f"Executing rollback step {i + 1}/{len(instructions)} for plan {plan_id}: {instruction}"
         )
         # Small delay to simulate real execution
         await asyncio.sleep(0.01)

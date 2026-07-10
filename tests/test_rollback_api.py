@@ -11,8 +11,8 @@ Tests cover:
 
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -21,14 +21,12 @@ from backend.services.rollback_service import (
     ROLLBACK_ELIGIBLE_STATUSES,
     RollbackEligibilityError,
     RollbackInstructionsError,
-    RollbackResult,
     RollbackStatus,
     RollbackTimeoutError,
     execute_rollback,
     validate_rollback_eligibility,
     validate_rollback_instructions,
 )
-
 
 # ============================================================
 # Unit tests for validate_rollback_eligibility

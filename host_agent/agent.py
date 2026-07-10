@@ -154,9 +154,7 @@ class HostAgent:
                     self.config.os_metrics_interval,
                 )
             ),
-            asyncio.create_task(
-                self._heartbeat_loop()
-            ),
+            asyncio.create_task(self._heartbeat_loop()),
         ]
 
         logger.info(
@@ -225,9 +223,7 @@ class HostAgent:
         if self.conn is None:
             logger.warning("No DB connection available for pg_stats collection")
             return None
-        return await collect_pg_stats(
-            self.conn, self.config.host_id, self.config.max_query_entries
-        )
+        return await collect_pg_stats(self.conn, self.config.host_id, self.config.max_query_entries)
 
     async def collect_locks(self) -> Optional[Dict[str, Any]]:
         """Collect current lock information."""
@@ -263,10 +259,7 @@ class HostAgent:
         if self._http_client is None:
             return
 
-        url = (
-            f"{self.config.control_plane_url}/api/v1/fleet/"
-            f"{self.config.host_id}/heartbeat"
-        )
+        url = f"{self.config.control_plane_url}/api/v1/fleet/{self.config.host_id}/heartbeat"
         payload = {
             "host_id": self.config.host_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -277,9 +270,7 @@ class HostAgent:
         try:
             response = await self._http_client.post(url, json=payload)
             if response.status_code >= 400:
-                logger.warning(
-                    f"Heartbeat returned status {response.status_code}: {response.text}"
-                )
+                logger.warning(f"Heartbeat returned status {response.status_code}: {response.text}")
         except httpx.RequestError as e:
             logger.error(f"Heartbeat request failed: {e}")
             raise
@@ -317,9 +308,7 @@ class HostAgent:
             }
 
             if previous_role is not None and previous_role != new_role:
-                logger.info(
-                    f"Role change detected: {previous_role} -> {new_role}"
-                )
+                logger.info(f"Role change detected: {previous_role} -> {new_role}")
                 # Report role change to control plane within 10 seconds (Req 6.5)
                 await self._report_role_version(result)
 
@@ -337,10 +326,7 @@ class HostAgent:
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(timeout=10.0)
 
-        url = (
-            f"{self.config.control_plane_url}/api/v1/fleet/"
-            f"{self.config.host_id}/role"
-        )
+        url = f"{self.config.control_plane_url}/api/v1/fleet/{self.config.host_id}/role"
         payload = {
             "host_id": self.config.host_id,
             "pg_version": role_version["pg_version"],
@@ -363,17 +349,12 @@ class HostAgent:
         if self._http_client is None:
             return
 
-        url = (
-            f"{self.config.control_plane_url}/api/v1/fleet/"
-            f"{self.config.host_id}/evidence"
-        )
+        url = f"{self.config.control_plane_url}/api/v1/fleet/{self.config.host_id}/evidence"
 
         try:
             response = await self._http_client.post(url, json=snapshot)
             if response.status_code >= 400:
-                logger.warning(
-                    f"Evidence submission returned status {response.status_code}"
-                )
+                logger.warning(f"Evidence submission returned status {response.status_code}")
         except httpx.RequestError as e:
             logger.error(f"Evidence submission failed: {e}")
             # Buffer will be handled by buffer module (task 5.2)

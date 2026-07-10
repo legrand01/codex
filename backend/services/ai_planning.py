@@ -276,9 +276,7 @@ def check_evidence_quality(
 
     # Evidence is sufficient if at least half of expected types are present
     # and at least half of those have quality above threshold
-    types_above_threshold = [
-        t for t in available_types if quality_scores.get(t, 0) >= threshold
-    ]
+    types_above_threshold = [t for t in available_types if quality_scores.get(t, 0) >= threshold]
     sufficient = (
         len(available_types) >= len(EXPECTED_EVIDENCE_TYPES) / 2
         and len(types_above_threshold) >= len(available_types) / 2
@@ -313,7 +311,9 @@ def _extract_evidence_references(evidence: List[dict]) -> List[dict]:
                 "timestamp": (
                     collected_at.isoformat()
                     if isinstance(collected_at, datetime)
-                    else str(collected_at) if collected_at else None
+                    else str(collected_at)
+                    if collected_at
+                    else None
                 ),
             }
             refs.append(ref)
@@ -350,60 +350,70 @@ def _analyze_pg_settings(evidence: List[dict], goal: str) -> List[dict]:
             "memory" in goal_lower or "performance" in goal_lower or "buffer" in goal_lower
         ):
             current = data["shared_buffers"]
-            results.append({
-                "setting_name": "shared_buffers",
-                "current_value": str(current),
-                "analysis": "shared_buffers may benefit from tuning based on goal",
-                "evidence_type": "pg_settings",
-            })
+            results.append(
+                {
+                    "setting_name": "shared_buffers",
+                    "current_value": str(current),
+                    "analysis": "shared_buffers may benefit from tuning based on goal",
+                    "evidence_type": "pg_settings",
+                }
+            )
 
         # Check work_mem
         if "work_mem" in data and (
             "memory" in goal_lower or "query" in goal_lower or "sort" in goal_lower
         ):
             current = data["work_mem"]
-            results.append({
-                "setting_name": "work_mem",
-                "current_value": str(current),
-                "analysis": "work_mem may benefit from tuning for query performance",
-                "evidence_type": "pg_settings",
-            })
+            results.append(
+                {
+                    "setting_name": "work_mem",
+                    "current_value": str(current),
+                    "analysis": "work_mem may benefit from tuning for query performance",
+                    "evidence_type": "pg_settings",
+                }
+            )
 
         # Check effective_cache_size
         if "effective_cache_size" in data and (
             "cache" in goal_lower or "performance" in goal_lower or "memory" in goal_lower
         ):
             current = data["effective_cache_size"]
-            results.append({
-                "setting_name": "effective_cache_size",
-                "current_value": str(current),
-                "analysis": "effective_cache_size impacts query planner cost estimates",
-                "evidence_type": "pg_settings",
-            })
+            results.append(
+                {
+                    "setting_name": "effective_cache_size",
+                    "current_value": str(current),
+                    "analysis": "effective_cache_size impacts query planner cost estimates",
+                    "evidence_type": "pg_settings",
+                }
+            )
 
         # Check max_connections
         if "max_connections" in data and (
             "connection" in goal_lower or "scale" in goal_lower or "concurrent" in goal_lower
         ):
             current = data["max_connections"]
-            results.append({
-                "setting_name": "max_connections",
-                "current_value": str(current),
-                "analysis": "max_connections may need adjustment for scaling",
-                "evidence_type": "pg_settings",
-            })
+            results.append(
+                {
+                    "setting_name": "max_connections",
+                    "current_value": str(current),
+                    "analysis": "max_connections may need adjustment for scaling",
+                    "evidence_type": "pg_settings",
+                }
+            )
 
         # Check maintenance_work_mem
         if "maintenance_work_mem" in data and (
             "vacuum" in goal_lower or "maintenance" in goal_lower or "index" in goal_lower
         ):
             current = data["maintenance_work_mem"]
-            results.append({
-                "setting_name": "maintenance_work_mem",
-                "current_value": str(current),
-                "analysis": "maintenance_work_mem affects VACUUM and index operations",
-                "evidence_type": "pg_settings",
-            })
+            results.append(
+                {
+                    "setting_name": "maintenance_work_mem",
+                    "current_value": str(current),
+                    "analysis": "maintenance_work_mem affects VACUUM and index operations",
+                    "evidence_type": "pg_settings",
+                }
+            )
 
     return results
 
@@ -501,8 +511,7 @@ def _extract_index_candidate(query: str) -> Optional[dict]:
     quoted_table = _quote_identifier_path(table_name)
     quoted_columns = ", ".join(_quote_identifier_path(c) for c in index_columns)
     sql = (
-        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} "
-        f"ON {quoted_table} ({quoted_columns})"
+        f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {index_name} ON {quoted_table} ({quoted_columns})"
     )
     if partial:
         sql += f" WHERE {_quote_identifier_path(partial['column'])} = {partial['value']}"
@@ -512,9 +521,7 @@ def _extract_index_candidate(query: str) -> Optional[dict]:
         "index_name": index_name,
         "table_name": table_name,
         "index_columns": index_columns,
-        "partial_predicate": (
-            f"{partial['column']} = {partial['value']}" if partial else None
-        ),
+        "partial_predicate": (f"{partial['column']} = {partial['value']}" if partial else None),
         "sql_statement": sql,
         "rollback_sql_statement": f"DROP INDEX CONCURRENTLY IF EXISTS {index_name};",
         "uses_partial_index": partial is not None,
@@ -817,8 +824,7 @@ async def generate_plan(
             evidence_references=all_evidence_refs,
             confidence_score=0.0,
             uncertainty_explanation=(
-                "No actionable recommendations could be generated. "
-                f"{diagnosis.diagnostic_summary}"
+                f"No actionable recommendations could be generated. {diagnosis.diagnostic_summary}"
             ),
             is_actionable=False,
             diagnostic_summary=diagnosis.diagnostic_summary,
@@ -851,8 +857,7 @@ async def generate_plan(
         feedback_lower = rejection_feedback.lower()
         # Simple heuristic: if feedback mentions a setting, skip it
         actionable_recs = [
-            r for r in actionable_recs
-            if r.setting_name.lower() not in feedback_lower
+            r for r in actionable_recs if r.setting_name.lower() not in feedback_lower
         ]
 
         if not actionable_recs:
@@ -904,9 +909,7 @@ async def generate_plan(
             continue
 
         # Generate proposed value
-        proposed_value = _generate_proposed_value(
-            rec.setting_name, current_value_str, goal
-        )
+        proposed_value = _generate_proposed_value(rec.setting_name, current_value_str, goal)
 
         # Skip if proposed value equals current value
         if proposed_value == current_value_str:
@@ -941,9 +944,7 @@ async def generate_plan(
             rollback_instructions=[],
             evidence_references=all_evidence_refs,
             confidence_score=diagnosis.overall_confidence,
-            uncertainty_explanation=(
-                "No changes needed — proposed values match current settings."
-            ),
+            uncertainty_explanation=("No changes needed — proposed values match current settings."),
             is_actionable=False,
             diagnostic_summary=diagnosis.diagnostic_summary,
         )
@@ -961,13 +962,9 @@ async def generate_plan(
 
     uncertainty_explanation = ""
     if all_gaps:
-        uncertainty_explanation = (
-            f"Confidence reduced by missing evidence: {', '.join(all_gaps)}."
-        )
+        uncertainty_explanation = f"Confidence reduced by missing evidence: {', '.join(all_gaps)}."
     elif plan_confidence < 1.0:
-        uncertainty_explanation = (
-            "Confidence below 1.0 due to evidence quality limitations."
-        )
+        uncertainty_explanation = "Confidence below 1.0 due to evidence quality limitations."
 
     return GeneratedPlan(
         proposed_changes=proposed_changes,

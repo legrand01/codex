@@ -82,16 +82,11 @@ async def collect_verification_evidence(
     """
     # Validate observation window range
     if observation_window_seconds < 10 or observation_window_seconds > 600:
-        logger.error(
-            f"Invalid observation window: {observation_window_seconds}s "
-            f"(must be 10-600s)"
-        )
+        logger.error(f"Invalid observation window: {observation_window_seconds}s (must be 10-600s)")
         return None
 
     # Wait for the observation window
-    logger.info(
-        f"Waiting {observation_window_seconds}s observation window for host {host_id}"
-    )
+    logger.info(f"Waiting {observation_window_seconds}s observation window for host {host_id}")
     await asyncio.sleep(observation_window_seconds)
 
     # Collect evidence from the host
@@ -175,9 +170,7 @@ def compare_evidence(pre_evidence: Dict, post_evidence: Dict) -> Dict[str, float
             post_val = post_data.get(key) if isinstance(post_data, dict) else None
 
             # Only compare numeric values
-            if isinstance(pre_val, (int, float)) and isinstance(
-                post_val, (int, float)
-            ):
+            if isinstance(pre_val, (int, float)) and isinstance(post_val, (int, float)):
                 delta = compute_metric_delta(float(pre_val), float(post_val))
                 if delta != float("inf") and delta != float("-inf"):
                     category_deltas.append(delta)
@@ -249,8 +242,7 @@ async def verify_and_decide(
             f"({observation_window}s) - host may be unavailable"
         )
         logger.warning(
-            f"Verification evidence collection failed for run {run_id}, "
-            f"initiating rollback"
+            f"Verification evidence collection failed for run {run_id}, initiating rollback"
         )
 
         # Log failure to audit
@@ -303,8 +295,7 @@ async def verify_and_decide(
                 target_host_id=host_id,
                 result="failure",
                 result_reason=(
-                    f"Metric '{metric_name}' degraded by {delta:.2f}% "
-                    f"(threshold: {threshold}%)"
+                    f"Metric '{metric_name}' degraded by {delta:.2f}% (threshold: {threshold}%)"
                 ),
                 details={
                     "plan_id": str(plan_id),
@@ -328,10 +319,7 @@ async def verify_and_decide(
             }
 
     # Step 5: All metrics within threshold -> mark as kept
-    logger.info(
-        f"All metrics within threshold ({threshold}%) for run {run_id}, "
-        f"change kept"
-    )
+    logger.info(f"All metrics within threshold ({threshold}%) for run {run_id}, change kept")
 
     await audit_logger.log(
         run_id=run_id,
@@ -385,9 +373,9 @@ async def _initiate_rollback(plan_id: UUID, pool=None) -> None:
                 )
 
                 if row and row["rollback_instructions"]:
-                    from backend.services.rollback_service import execute_rollback
-
                     import json
+
+                    from backend.services.rollback_service import execute_rollback
 
                     instructions = row["rollback_instructions"]
                     if isinstance(instructions, str):
@@ -405,9 +393,7 @@ async def _initiate_rollback(plan_id: UUID, pool=None) -> None:
                         plan_id,
                     )
                 else:
-                    logger.error(
-                        f"No rollback instructions found for plan {plan_id}"
-                    )
+                    logger.error(f"No rollback instructions found for plan {plan_id}")
     except Exception as e:
         logger.error(f"Failed to initiate rollback for plan {plan_id}: {e}")
         # Update plan status to rollback_failed
@@ -422,6 +408,4 @@ async def _initiate_rollback(plan_id: UUID, pool=None) -> None:
                         plan_id,
                     )
         except Exception as inner_e:
-            logger.error(
-                f"Failed to update plan status to rollback_failed: {inner_e}"
-            )
+            logger.error(f"Failed to update plan status to rollback_failed: {inner_e}")

@@ -12,7 +12,6 @@ Requirements: 1.3, 2.2
 """
 
 import asyncio
-import json
 import logging
 from typing import Set
 
@@ -47,8 +46,7 @@ class FleetConnectionManager:
         await websocket.accept()
         self.active_connections.add(websocket)
         logger.info(
-            f"Fleet WebSocket client connected. "
-            f"Total connections: {len(self.active_connections)}"
+            f"Fleet WebSocket client connected. Total connections: {len(self.active_connections)}"
         )
 
     def disconnect(self, websocket: WebSocket) -> None:
@@ -109,9 +107,7 @@ async def _redis_listener(websocket: WebSocket) -> None:
         )
 
         while True:
-            message = await pubsub.get_message(
-                ignore_subscribe_messages=True, timeout=1.0
-            )
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
             if message is not None and message["type"] == "message":
                 data = message["data"]
                 # Data may be bytes or string depending on Redis config

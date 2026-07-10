@@ -143,9 +143,7 @@ def _parse_json_field(value) -> dict:
 
 
 @router.get("/snapshot/{snapshot_id}", response_model=EvidenceSnapshotResponse)
-async def get_evidence_snapshot(
-    snapshot_id: UUID, db=Depends(get_db)
-) -> EvidenceSnapshotResponse:
+async def get_evidence_snapshot(snapshot_id: UUID, db=Depends(get_db)) -> EvidenceSnapshotResponse:
     """
     Get a specific evidence snapshot by ID.
 
@@ -179,9 +177,7 @@ async def get_evidence_snapshot(
 
 
 @router.get("/{run_id}", response_model=EvidenceListResponse)
-async def list_evidence_by_run(
-    run_id: UUID, db=Depends(get_db)
-) -> EvidenceListResponse:
+async def list_evidence_by_run(run_id: UUID, db=Depends(get_db)) -> EvidenceListResponse:
     """
     List all evidence snapshots collected during a loop run.
 
@@ -233,8 +229,7 @@ async def list_evidence_by_run(
 
     # Build category summaries
     categories = [
-        CategorySummary(category=cat, count=cnt)
-        for cat, cnt in sorted(category_counts.items())
+        CategorySummary(category=cat, count=cnt) for cat, cnt in sorted(category_counts.items())
     ]
 
     return EvidenceListResponse(

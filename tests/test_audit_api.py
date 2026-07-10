@@ -8,7 +8,6 @@ Tests the audit API routes:
 Uses mocking to isolate the API layer from the database.
 """
 
-import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -19,7 +18,6 @@ from httpx import ASGITransport, AsyncClient
 from backend.main import app
 from backend.models.audit import AuditEntry
 from backend.services.audit_logger import AuditLoggerError
-
 
 # =============================================================================
 # Fixtures
@@ -74,9 +72,7 @@ class TestListAuditEntries:
             ),
         ]
 
-        with patch(
-            "backend.api.audit.get_audit_logger"
-        ) as mock_get_logger:
+        with patch("backend.api.audit.get_audit_logger") as mock_get_logger:
             mock_logger = AsyncMock()
             mock_logger.query = AsyncMock(return_value=mock_entries)
             mock_get_logger.return_value = mock_logger
@@ -93,9 +89,7 @@ class TestListAuditEntries:
     @pytest.mark.asyncio
     async def test_list_audit_entries_empty(self, client):
         """GET /api/v1/audit/ should return empty list when no entries."""
-        with patch(
-            "backend.api.audit.get_audit_logger"
-        ) as mock_get_logger:
+        with patch("backend.api.audit.get_audit_logger") as mock_get_logger:
             mock_logger = AsyncMock()
             mock_logger.query = AsyncMock(return_value=[])
             mock_get_logger.return_value = mock_logger
@@ -110,9 +104,7 @@ class TestListAuditEntries:
     @pytest.mark.asyncio
     async def test_list_audit_entries_with_pagination(self, client):
         """GET /api/v1/audit/ should accept limit and offset params."""
-        with patch(
-            "backend.api.audit.get_audit_logger"
-        ) as mock_get_logger:
+        with patch("backend.api.audit.get_audit_logger") as mock_get_logger:
             mock_logger = AsyncMock()
             mock_logger.query = AsyncMock(return_value=[])
             mock_get_logger.return_value = mock_logger
@@ -127,13 +119,9 @@ class TestListAuditEntries:
     @pytest.mark.asyncio
     async def test_list_audit_entries_service_error(self, client):
         """GET /api/v1/audit/ should return 503 on service error."""
-        with patch(
-            "backend.api.audit.get_audit_logger"
-        ) as mock_get_logger:
+        with patch("backend.api.audit.get_audit_logger") as mock_get_logger:
             mock_logger = AsyncMock()
-            mock_logger.query = AsyncMock(
-                side_effect=AuditLoggerError("Database unavailable")
-            )
+            mock_logger.query = AsyncMock(side_effect=AuditLoggerError("Database unavailable"))
             mock_get_logger.return_value = mock_logger
 
             response = await client.get("/api/v1/audit/")
@@ -169,9 +157,7 @@ class TestGetAuditEntriesForRun:
             ),
         ]
 
-        with patch(
-            "backend.api.audit.get_audit_logger"
-        ) as mock_get_logger:
+        with patch("backend.api.audit.get_audit_logger") as mock_get_logger:
             mock_logger = AsyncMock()
             mock_logger.query = AsyncMock(return_value=mock_entries)
             mock_get_logger.return_value = mock_logger
@@ -188,9 +174,7 @@ class TestGetAuditEntriesForRun:
         """GET /api/v1/audit/{run_id} should return empty for unknown run."""
         run_id = uuid4()
 
-        with patch(
-            "backend.api.audit.get_audit_logger"
-        ) as mock_get_logger:
+        with patch("backend.api.audit.get_audit_logger") as mock_get_logger:
             mock_logger = AsyncMock()
             mock_logger.query = AsyncMock(return_value=[])
             mock_get_logger.return_value = mock_logger
@@ -213,13 +197,9 @@ class TestGetAuditEntriesForRun:
         """GET /api/v1/audit/{run_id} should return 503 on service error."""
         run_id = uuid4()
 
-        with patch(
-            "backend.api.audit.get_audit_logger"
-        ) as mock_get_logger:
+        with patch("backend.api.audit.get_audit_logger") as mock_get_logger:
             mock_logger = AsyncMock()
-            mock_logger.query = AsyncMock(
-                side_effect=AuditLoggerError("Database unavailable")
-            )
+            mock_logger.query = AsyncMock(side_effect=AuditLoggerError("Database unavailable"))
             mock_get_logger.return_value = mock_logger
 
             response = await client.get(f"/api/v1/audit/{run_id}")

@@ -3,8 +3,8 @@ Shared test fixtures and configuration for the test suite.
 """
 
 import pytest
-from hypothesis import settings as hypothesis_settings
 from httpx import ASGITransport, AsyncClient
+from hypothesis import settings as hypothesis_settings
 
 from backend.main import app
 

@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir . 2>/dev/null || pip install --no-cache-dir -e .
 
 # Copy application code
 COPY backend/ ./backend/
-COPY host-agent/ ./host-agent/
+COPY host_agent/ ./host_agent/
 
 # Create non-root user for security
 RUN adduser --disabled-password --gecos "" appuser && \

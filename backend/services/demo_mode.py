@@ -12,8 +12,8 @@ Requirements: 14.1, 14.2, 14.3, 14.4, 14.6
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Set
-from uuid import UUID, uuid4
+from typing import Any, Dict, List, Set
+from uuid import uuid4
 
 from backend.models.enums import (
     ConnectionStatus,
@@ -212,7 +212,10 @@ def _generate_demo_evidence(
                         "shared_blks_read": 23000,
                     },
                     {
-                        "query": "UPDATE inventory SET quantity = quantity - $1 WHERE product_id = $2",
+                        "query": (
+                            "UPDATE inventory SET quantity = quantity - $1 "
+                            "WHERE product_id = $2"
+                        ),
                         "calls": 8900,
                         "mean_exec_time_ms": 89.2,
                         "max_exec_time_ms": 5600.1,
@@ -495,16 +498,30 @@ def _generate_demo_plans(
                 },
             ],
             "evidence_references": [
-                {"snapshot_id": str(uuid4()), "timestamp": (now - timedelta(minutes=90)).isoformat()},
-                {"snapshot_id": str(uuid4()), "timestamp": (now - timedelta(minutes=88)).isoformat()},
+                {
+                    "snapshot_id": str(uuid4()),
+                    "timestamp": (now - timedelta(minutes=90)).isoformat(),
+                },
+                {
+                    "snapshot_id": str(uuid4()),
+                    "timestamp": (now - timedelta(minutes=88)).isoformat(),
+                },
             ],
             "risk_score": 35,
             "confidence_score": 0.87,
             "uncertainty_explanation": "work_mem increase is well-supported by query patterns; "
             "random_page_cost adjustment is exploratory",
             "rollback_instructions": [
-                {"setting": "work_mem", "restore_value": "32MB", "method": "ALTER SYSTEM SET work_mem = '32MB'"},
-                {"setting": "random_page_cost", "restore_value": "1.1", "method": "ALTER SYSTEM SET random_page_cost = '1.1'"},
+                {
+                    "setting": "work_mem",
+                    "restore_value": "32MB",
+                    "method": "ALTER SYSTEM SET work_mem = '32MB'",
+                },
+                {
+                    "setting": "random_page_cost",
+                    "restore_value": "1.1",
+                    "method": "ALTER SYSTEM SET random_page_cost = '1.1'",
+                },
             ],
             "rejection_reason": None,
             "approved_by": "demo_dba@example.com",
@@ -527,13 +544,22 @@ def _generate_demo_plans(
                 },
             ],
             "evidence_references": [
-                {"snapshot_id": str(uuid4()), "timestamp": (now - timedelta(minutes=50)).isoformat()},
+                {
+                    "snapshot_id": str(uuid4()),
+                    "timestamp": (now - timedelta(minutes=50)).isoformat(),
+                },
             ],
             "risk_score": 82,
             "confidence_score": 0.62,
-            "uncertainty_explanation": "max_wal_senders requires restart and is not on the allowlist",
+            "uncertainty_explanation": (
+                "max_wal_senders requires restart and is not on the allowlist"
+            ),
             "rollback_instructions": [
-                {"setting": "max_wal_senders", "restore_value": "10", "method": "ALTER SYSTEM SET max_wal_senders = '10'"},
+                {
+                    "setting": "max_wal_senders",
+                    "restore_value": "10",
+                    "method": "ALTER SYSTEM SET max_wal_senders = '10'",
+                },
             ],
             "rejection_reason": None,
             "approved_by": None,
@@ -564,8 +590,14 @@ def _generate_demo_plans(
                 },
             ],
             "evidence_references": [
-                {"snapshot_id": str(uuid4()), "timestamp": (now - timedelta(minutes=8)).isoformat()},
-                {"snapshot_id": str(uuid4()), "timestamp": (now - timedelta(minutes=6)).isoformat()},
+                {
+                    "snapshot_id": str(uuid4()),
+                    "timestamp": (now - timedelta(minutes=8)).isoformat(),
+                },
+                {
+                    "snapshot_id": str(uuid4()),
+                    "timestamp": (now - timedelta(minutes=6)).isoformat(),
+                },
             ],
             "risk_score": 45,
             "confidence_score": 0.79,

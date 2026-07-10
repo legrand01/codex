@@ -193,11 +193,7 @@ async def process_heartbeat(
         values.append(host_id)
         id_placeholder = f"${len(values)}"
 
-        query = (
-            f"UPDATE hosts SET {', '.join(set_clauses)} "
-            f"WHERE id = {id_placeholder} "
-            f"RETURNING *"
-        )
+        query = f"UPDATE hosts SET {', '.join(set_clauses)} WHERE id = {id_placeholder} RETURNING *"
 
         updated_host = await conn.fetchrow(query, *values)
 

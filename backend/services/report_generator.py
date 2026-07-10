@@ -231,30 +231,34 @@ class ReportGenerator:
         decisions = []
         for plan in plans:
             if plan.get("approved_by"):
-                decisions.append({
-                    "plan_id": str(plan["id"]),
-                    "decision": "approved",
-                    "actor": plan["approved_by"],
-                    "timestamp": (
-                        plan["approved_at"].isoformat()
-                        if isinstance(plan.get("approved_at"), datetime)
-                        else str(plan.get("approved_at"))
-                    ),
-                    "provenance": LABEL_VERIFIED_FACT,
-                })
+                decisions.append(
+                    {
+                        "plan_id": str(plan["id"]),
+                        "decision": "approved",
+                        "actor": plan["approved_by"],
+                        "timestamp": (
+                            plan["approved_at"].isoformat()
+                            if isinstance(plan.get("approved_at"), datetime)
+                            else str(plan.get("approved_at"))
+                        ),
+                        "provenance": LABEL_VERIFIED_FACT,
+                    }
+                )
             elif plan.get("rejected_by"):
-                decisions.append({
-                    "plan_id": str(plan["id"]),
-                    "decision": "rejected",
-                    "actor": plan["rejected_by"],
-                    "reason": plan.get("rejection_reason"),
-                    "timestamp": (
-                        plan["rejected_at"].isoformat()
-                        if isinstance(plan.get("rejected_at"), datetime)
-                        else str(plan.get("rejected_at"))
-                    ),
-                    "provenance": LABEL_VERIFIED_FACT,
-                })
+                decisions.append(
+                    {
+                        "plan_id": str(plan["id"]),
+                        "decision": "rejected",
+                        "actor": plan["rejected_by"],
+                        "reason": plan.get("rejection_reason"),
+                        "timestamp": (
+                            plan["rejected_at"].isoformat()
+                            if isinstance(plan.get("rejected_at"), datetime)
+                            else str(plan.get("rejected_at"))
+                        ),
+                        "provenance": LABEL_VERIFIED_FACT,
+                    }
+                )
 
         return decisions
 
@@ -275,23 +279,25 @@ class ReportGenerator:
                 if isinstance(rollback_instructions, str):
                     rollback_instructions = json.loads(rollback_instructions)
 
-                changes.append({
-                    "plan_id": str(plan["id"]),
-                    "applied_at": (
-                        plan["applied_at"].isoformat()
-                        if isinstance(plan["applied_at"], datetime)
-                        else str(plan["applied_at"])
-                    ),
-                    "proposed_changes": proposed_changes or [],
-                    "rollback_instructions": rollback_instructions or [],
-                    "rolled_back": plan.get("status") == "rolled_back",
-                    "rolled_back_at": (
-                        plan["rolled_back_at"].isoformat()
-                        if isinstance(plan.get("rolled_back_at"), datetime)
-                        else None
-                    ),
-                    "provenance": LABEL_VERIFIED_FACT,
-                })
+                changes.append(
+                    {
+                        "plan_id": str(plan["id"]),
+                        "applied_at": (
+                            plan["applied_at"].isoformat()
+                            if isinstance(plan["applied_at"], datetime)
+                            else str(plan["applied_at"])
+                        ),
+                        "proposed_changes": proposed_changes or [],
+                        "rollback_instructions": rollback_instructions or [],
+                        "rolled_back": plan.get("status") == "rolled_back",
+                        "rolled_back_at": (
+                            plan["rolled_back_at"].isoformat()
+                            if isinstance(plan.get("rolled_back_at"), datetime)
+                            else None
+                        ),
+                        "provenance": LABEL_VERIFIED_FACT,
+                    }
+                )
 
         return changes
 
@@ -309,18 +315,20 @@ class ReportGenerator:
                 if isinstance(details, str):
                     details = json.loads(details)
 
-                results.append({
-                    "action": action_type,
-                    "timestamp": (
-                        entry["timestamp"].isoformat()
-                        if isinstance(entry.get("timestamp"), datetime)
-                        else str(entry.get("timestamp"))
-                    ),
-                    "result": entry.get("result"),
-                    "result_reason": entry.get("result_reason"),
-                    "details": details,
-                    "provenance": LABEL_VERIFIED_FACT,
-                })
+                results.append(
+                    {
+                        "action": action_type,
+                        "timestamp": (
+                            entry["timestamp"].isoformat()
+                            if isinstance(entry.get("timestamp"), datetime)
+                            else str(entry.get("timestamp"))
+                        ),
+                        "result": entry.get("result"),
+                        "result_reason": entry.get("result_reason"),
+                        "details": details,
+                        "provenance": LABEL_VERIFIED_FACT,
+                    }
+                )
 
         return results
 
@@ -458,9 +466,7 @@ class ReportGenerator:
             raise
         except Exception as e:
             logger.error(f"Failed to generate report for run {run_id}: {e}")
-            raise ReportGenerationError(
-                f"Failed to generate report for run {run_id}: {e}"
-            ) from e
+            raise ReportGenerationError(f"Failed to generate report for run {run_id}: {e}") from e
 
 
 # Module-level singleton

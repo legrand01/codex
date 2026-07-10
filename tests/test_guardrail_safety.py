@@ -6,7 +6,7 @@ Covers tasks 7.7, 7.8, and 7.10.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -20,8 +20,6 @@ from backend.services.guardrail_engine import (
     full_safety_check,
     validate_rollback_plan,
 )
-
-
 
 # ─── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -51,7 +49,6 @@ def mock_pool_with_settings():
                 "effective_cache_size": "4GB",
             }
 
-
         pool = AsyncMock()
         conn = AsyncMock()
 
@@ -59,10 +56,7 @@ def mock_pool_with_settings():
             if "evidence_snapshots" in query:
                 return [{"data": known_settings}]
             if "guardrail_allowlist" in query:
-                return [
-                    {"setting_name": name}
-                    for name in known_settings.keys()
-                ]
+                return [{"setting_name": name} for name in known_settings.keys()]
             return []
 
         conn.fetch = mock_fetch
@@ -76,7 +70,6 @@ def mock_pool_with_settings():
         return pool
 
     return _make_pool
-
 
 
 # ─── SQL Validation Tests ────────────────────────────────────────────────────
@@ -111,7 +104,6 @@ class TestSqlValidation:
 
     def test_invalid_delete(self):
         assert not _validate_sql_statement("DELETE FROM audit_log")
-
 
 
 # ─── Dry-Run Tests (Task 7.7) ────────────────────────────────────────────────
@@ -151,7 +143,6 @@ class TestExecuteDryRun:
         assert result.errors == []
         assert result.execution_time_seconds >= 0
 
-
     @pytest.mark.asyncio
     async def test_dry_run_invalid_setting_fails(
         self, host_id, mock_pool_with_settings, mock_audit_logger
@@ -177,7 +168,6 @@ class TestExecuteDryRun:
         assert result.passed is False
         assert len(result.errors) > 0
         assert "nonexistent_setting" in result.errors[0]
-
 
     @pytest.mark.asyncio
     async def test_dry_run_invalid_sql_fails(
@@ -229,7 +219,6 @@ class TestExecuteDryRun:
         assert call_kwargs["action_type"] == "dry_run"
         assert call_kwargs["target_host_id"] == host_id
 
-
     @pytest.mark.asyncio
     async def test_dry_run_timeout(self, host_id, mock_audit_logger):
         """Dry-run that exceeds timeout → fails with timeout error."""
@@ -263,7 +252,6 @@ class TestExecuteDryRun:
         assert any("timed out" in e for e in result.errors)
 
 
-
 # ─── Rollback Validation Tests (Task 7.8) ────────────────────────────────────
 
 
@@ -285,9 +273,7 @@ class TestValidateRollbackPlan:
             "work_mem": "4MB",
         }
 
-        result = validate_rollback_plan(
-            proposed_changes, rollback_instructions, pre_snapshot
-        )
+        result = validate_rollback_plan(proposed_changes, rollback_instructions, pre_snapshot)
 
         assert isinstance(result, RollbackValidation)
         assert result.valid is True
@@ -308,15 +294,12 @@ class TestValidateRollbackPlan:
             "work_mem": "4MB",
         }
 
-        result = validate_rollback_plan(
-            proposed_changes, rollback_instructions, pre_snapshot
-        )
+        result = validate_rollback_plan(proposed_changes, rollback_instructions, pre_snapshot)
 
         assert result.valid is False
         assert len(result.errors) == 1
         assert "work_mem" in result.errors[0]
         assert "Missing rollback" in result.errors[0]
-
 
     def test_wrong_restore_value(self):
         """Rollback plan with wrong restore value → invalid."""
@@ -330,9 +313,7 @@ class TestValidateRollbackPlan:
             "shared_buffers": "128MB",
         }
 
-        result = validate_rollback_plan(
-            proposed_changes, rollback_instructions, pre_snapshot
-        )
+        result = validate_rollback_plan(proposed_changes, rollback_instructions, pre_snapshot)
 
         assert result.valid is False
         assert len(result.errors) == 1
@@ -348,9 +329,7 @@ class TestValidateRollbackPlan:
         ]
         pre_snapshot = {}  # Empty snapshot
 
-        result = validate_rollback_plan(
-            proposed_changes, rollback_instructions, pre_snapshot
-        )
+        result = validate_rollback_plan(proposed_changes, rollback_instructions, pre_snapshot)
 
         assert result.valid is False
         assert any("not found in pre-change snapshot" in e for e in result.errors)
@@ -360,7 +339,6 @@ class TestValidateRollbackPlan:
         result = validate_rollback_plan([], [], {})
         assert result.valid is True
         assert result.errors == []
-
 
 
 # ─── Full Safety Check Tests (Task 7.10) ─────────────────────────────────────
@@ -411,7 +389,6 @@ class TestFullSafetyCheck:
         ctx_manager.__aexit__ = AsyncMock(return_value=False)
         pool.acquire = MagicMock(return_value=ctx_manager)
 
-
         proposed_changes = [
             {
                 "setting_name": "shared_buffers",
@@ -442,7 +419,6 @@ class TestFullSafetyCheck:
         assert "risk_score" in result.stage_results
         assert "approval" in result.stage_results
         assert "dry_run" in result.stage_results
-
 
     @pytest.mark.asyncio
     async def test_stops_at_allowlist_failure(self, host_id, mock_audit_logger):
@@ -489,7 +465,6 @@ class TestFullSafetyCheck:
         assert "dry_run" not in result.stage_results
         assert "approval" not in result.stage_results
 
-
     @pytest.mark.asyncio
     async def test_stops_at_risk_score_failure(self, host_id, mock_audit_logger):
         """Full safety check stops at risk_score stage when threshold exceeded."""
@@ -532,8 +507,7 @@ class TestFullSafetyCheck:
         ]
         pre_snapshot = {f"setting_{i}": "10" for i in range(15)}
         rollback_instructions = [
-            {"setting_name": f"setting_{i}", "restore_value": "10"}
-            for i in range(15)
+            {"setting_name": f"setting_{i}", "restore_value": "10"} for i in range(15)
         ]
 
         result = await full_safety_check(
@@ -550,11 +524,8 @@ class TestFullSafetyCheck:
         assert result.blocked_at_stage == "risk_score"
         assert "dry_run" not in result.stage_results
 
-
     @pytest.mark.asyncio
-    async def test_stops_at_approval_rollback_validation_failure(
-        self, host_id, mock_audit_logger
-    ):
+    async def test_stops_at_approval_rollback_validation_failure(self, host_id, mock_audit_logger):
         """Full safety check stops at approval stage when rollback is invalid."""
         pool = AsyncMock()
         conn = AsyncMock()
@@ -605,7 +576,6 @@ class TestFullSafetyCheck:
         assert result.passed is False
         assert result.blocked_at_stage == "approval"
         assert "dry_run" not in result.stage_results
-
 
     @pytest.mark.asyncio
     async def test_workflow_ordering_enforced(self, host_id, mock_audit_logger):
@@ -666,7 +636,6 @@ class TestFullSafetyCheck:
         assert result.passed is True
         stage_keys = list(result.stage_results.keys())
         assert stage_keys == ["allowlist", "risk_score", "approval", "dry_run"]
-
 
     @pytest.mark.asyncio
     async def test_each_stage_records_audit(self, host_id, mock_audit_logger):

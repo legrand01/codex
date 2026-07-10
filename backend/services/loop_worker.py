@@ -28,7 +28,6 @@ from backend.services.audit_logger import AuditLogger, get_audit_logger
 logger = logging.getLogger(__name__)
 
 
-
 # Timeout for unresponsive detection (seconds)
 UNRESPONSIVE_TIMEOUT_SECONDS = 60
 
@@ -39,6 +38,7 @@ EVIDENCE_RETRY_DELAY_SECONDS = 10
 @dataclass
 class RunResult:
     """Result of a DBA loop run execution."""
+
     run_id: UUID
     status: str
     goal: str
@@ -51,6 +51,7 @@ class RunResult:
 @dataclass
 class StepResult:
     """Result of executing a single workflow step."""
+
     step: WorkflowStep
     success: bool
     data: dict = field(default_factory=dict)
@@ -64,7 +65,6 @@ _active_runs: Dict[str, "DBALoopWorker"] = {}
 def get_active_runs() -> Dict[str, "DBALoopWorker"]:
     """Get all currently active loop worker instances."""
     return _active_runs
-
 
 
 class DBALoopWorker:
@@ -112,7 +112,6 @@ class DBALoopWorker:
         self._heartbeat_time = time.monotonic()
         self._last_step_transition = time.monotonic()
 
-
     def is_unresponsive(self) -> bool:
         """Check if the worker has been unresponsive (no activity > 60s)."""
         elapsed = time.monotonic() - self._last_step_transition
@@ -136,19 +135,21 @@ class DBALoopWorker:
         # Publish step transition via Redis for WebSocket updates
         try:
             from backend.db.redis_manager import get_redis_client
+
             redis_client = get_redis_client()
             if redis_client:
                 await redis_client.publish(
                     f"run:{run_id}:steps",
-                    json.dumps({
-                        "run_id": str(run_id),
-                        "step": step.value,
-                        "timestamp": now.isoformat(),
-                    }),
+                    json.dumps(
+                        {
+                            "run_id": str(run_id),
+                            "step": step.value,
+                            "timestamp": now.isoformat(),
+                        }
+                    ),
                 )
         except Exception as e:
             logger.warning(f"Failed to publish step transition: {e}")
-
 
     async def _update_run_status(
         self, run_id: UUID, status: str, failure_reason: Optional[str] = None
@@ -163,7 +164,10 @@ class DBALoopWorker:
                     SET status = $1, failure_reason = $2, completed_at = $3
                     WHERE id = $4
                     """,
-                    status, failure_reason, now, run_id,
+                    status,
+                    failure_reason,
+                    now,
+                    run_id,
                 )
             else:
                 await conn.execute(
@@ -172,7 +176,9 @@ class DBALoopWorker:
                     SET status = $1, failure_reason = $2
                     WHERE id = $3
                     """,
-                    status, failure_reason, run_id,
+                    status,
+                    failure_reason,
+                    run_id,
                 )
 
     async def _increment_iteration(self, run_id: UUID) -> None:
@@ -182,7 +188,6 @@ class DBALoopWorker:
                 "UPDATE loop_runs SET current_iteration = current_iteration + 1 WHERE id = $1",
                 run_id,
             )
-
 
     def decompose_goal(self, goal: str, max_steps: int = 20) -> List[WorkflowStep]:
         """
@@ -219,7 +224,6 @@ class DBALoopWorker:
         steps = full_cycle[:max_steps]
         return steps if steps else [WorkflowStep.REPORT]
 
-
     async def _collect_evidence(self, run_id: UUID, host_id: UUID) -> StepResult:
         """
         Collect evidence from the host agent.
@@ -227,6 +231,7 @@ class DBALoopWorker:
         On failure: retry once after 10 seconds, halt if retry fails.
         Requirements: 11.8
         """
+
         async def _do_collect() -> dict:
             """Attempt evidence collection from the database/host."""
             async with self.pool.acquire() as conn:
@@ -268,13 +273,8 @@ class DBALoopWorker:
                 data = await _do_collect()
                 return StepResult(step=WorkflowStep.OBSERVE, success=True, data=data)
             except Exception as retry_error:
-                error_msg = (
-                    f"Evidence collection failed after retry: {retry_error}"
-                )
-                return StepResult(
-                    step=WorkflowStep.OBSERVE, success=False, error=error_msg
-                )
-
+                error_msg = f"Evidence collection failed after retry: {retry_error}"
+                return StepResult(step=WorkflowStep.OBSERVE, success=False, error=error_msg)
 
     def _extract_current_settings(self, evidence: List[dict]) -> dict:
         """Extract current pg_settings values from evidence snapshots."""
@@ -399,7 +399,6 @@ class DBALoopWorker:
             },
         )
 
-
     async def _submit_to_guardrail(
         self,
         run_id: UUID,
@@ -463,9 +462,7 @@ class DBALoopWorker:
             )
 
         except asyncio.TimeoutError:
-            timeout_msg = (
-                f"Approval timeout ({config.approval_timeout_hours}h) elapsed"
-            )
+            timeout_msg = f"Approval timeout ({config.approval_timeout_hours}h) elapsed"
             await self.audit_logger.log(
                 run_id=run_id,
                 actor_type="system",
@@ -496,7 +493,6 @@ class DBALoopWorker:
                 success=False,
                 error=error_msg,
             )
-
 
     async def _wait_for_approval(
         self, run_id: UUID, host_id: UUID, config: LoopConfig
@@ -602,7 +598,6 @@ class DBALoopWorker:
             error="Run was halted during approval wait",
         )
 
-
     async def start_run(
         self,
         goal: str,
@@ -627,9 +622,7 @@ class DBALoopWorker:
         # Determine host_id if not provided (use first available host)
         if host_id is None:
             async with self.pool.acquire() as conn:
-                host_row = await conn.fetchrow(
-                    "SELECT id FROM hosts LIMIT 1"
-                )
+                host_row = await conn.fetchrow("SELECT id FROM hosts LIMIT 1")
             if host_row:
                 host_id = host_row["id"]
                 self._host_id = host_id
@@ -644,13 +637,19 @@ class DBALoopWorker:
                     degradation_threshold_pct, started_at, last_step_transition_at
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 """,
-                run_id, host_id, goal, "running",
+                run_id,
+                host_id,
+                goal,
+                "running",
                 WorkflowStep.OBSERVE.value,
-                1, config.max_iterations, config.max_steps,
+                1,
+                config.max_iterations,
+                config.max_steps,
                 config.approval_timeout_hours,
                 config.verification_window_seconds,
                 config.degradation_threshold_pct,
-                now, now,
+                now,
+                now,
             )
 
         # Register as active
@@ -675,7 +674,6 @@ class DBALoopWorker:
         diagnostic_report: Optional[dict] = None
         completed_diagnostic_only = False
 
-
         try:
             for iteration in range(1, config.max_iterations + 1):
                 if self._halted:
@@ -694,9 +692,7 @@ class DBALoopWorker:
                         result = await self._collect_evidence(run_id, host_id)
                         if not result.success:
                             failure_reason = result.error
-                            await self._update_run_status(
-                                run_id, "failed", failure_reason
-                            )
+                            await self._update_run_status(run_id, "failed", failure_reason)
                             await self.audit_logger.log(
                                 run_id=run_id,
                                 actor_type="system",
@@ -720,9 +716,7 @@ class DBALoopWorker:
                         result = await self._propose_plan(run_id, host_id, goal)
                         if not result.success:
                             failure_reason = result.error
-                            await self._update_run_status(
-                                run_id, "failed", failure_reason
-                            )
+                            await self._update_run_status(run_id, "failed", failure_reason)
                             _active_runs.pop(str(run_id), None)
                             return RunResult(
                                 run_id=run_id,
@@ -735,9 +729,7 @@ class DBALoopWorker:
 
                         if not result.data.get("is_actionable", True):
                             diagnostic_report = {
-                                "diagnostic_summary": result.data.get(
-                                    "diagnostic_summary"
-                                ),
+                                "diagnostic_summary": result.data.get("diagnostic_summary"),
                                 "uncertainty_explanation": result.data.get(
                                     "uncertainty_explanation"
                                 ),
@@ -751,9 +743,7 @@ class DBALoopWorker:
                                 action_type="diagnostic_only_completed",
                                 target_host_id=host_id,
                                 result="success",
-                                result_reason=result.data.get(
-                                    "uncertainty_explanation"
-                                ),
+                                result_reason=result.data.get("uncertainty_explanation"),
                                 details=diagnostic_report,
                             )
                             break
@@ -761,18 +751,14 @@ class DBALoopWorker:
                         active_plan = result.data
 
                     elif step == WorkflowStep.APPROVAL_GATE:
-                        gate_result = await self._wait_for_approval(
-                            run_id, host_id, config
-                        )
+                        gate_result = await self._wait_for_approval(run_id, host_id, config)
                         if not gate_result.success:
                             if "timeout" in (gate_result.error or "").lower():
                                 status = "timed_out"
                             else:
                                 status = "failed"
                             failure_reason = gate_result.error
-                            await self._update_run_status(
-                                run_id, status, failure_reason
-                            )
+                            await self._update_run_status(run_id, status, failure_reason)
                             _active_runs.pop(str(run_id), None)
                             return RunResult(
                                 run_id=run_id,
@@ -785,9 +771,7 @@ class DBALoopWorker:
 
                     elif step == WorkflowStep.SAFETY_CHECK:
                         if not active_plan:
-                            failure_reason = (
-                                "Safety check reached without an actionable plan"
-                            )
+                            failure_reason = "Safety check reached without an actionable plan"
                             await self.audit_logger.log(
                                 run_id=run_id,
                                 actor_type="system",
@@ -797,9 +781,7 @@ class DBALoopWorker:
                                 result="blocked",
                                 result_reason=failure_reason,
                             )
-                            await self._update_run_status(
-                                run_id, "failed", failure_reason
-                            )
+                            await self._update_run_status(run_id, "failed", failure_reason)
                             _active_runs.pop(str(run_id), None)
                             return RunResult(
                                 run_id=run_id,
@@ -811,13 +793,9 @@ class DBALoopWorker:
                             )
 
                         proposed_changes = active_plan.get("proposed_changes") or []
-                        rollback_instructions = (
-                            active_plan.get("rollback_instructions") or []
-                        )
+                        rollback_instructions = active_plan.get("rollback_instructions") or []
                         if not proposed_changes:
-                            failure_reason = (
-                                "Safety check reached with no proposed changes"
-                            )
+                            failure_reason = "Safety check reached with no proposed changes"
                             await self.audit_logger.log(
                                 run_id=run_id,
                                 actor_type="system",
@@ -828,9 +806,7 @@ class DBALoopWorker:
                                 result_reason=failure_reason,
                                 details={"plan_id": active_plan.get("plan_id")},
                             )
-                            await self._update_run_status(
-                                run_id, "failed", failure_reason
-                            )
+                            await self._update_run_status(run_id, "failed", failure_reason)
                             _active_runs.pop(str(run_id), None)
                             return RunResult(
                                 run_id=run_id,
@@ -851,9 +827,7 @@ class DBALoopWorker:
                         )
                         if not safety_result.success:
                             failure_reason = safety_result.error
-                            await self._update_run_status(
-                                run_id, "failed", failure_reason
-                            )
+                            await self._update_run_status(run_id, "failed", failure_reason)
                             _active_runs.pop(str(run_id), None)
                             return RunResult(
                                 run_id=run_id,
@@ -893,7 +867,6 @@ class DBALoopWorker:
                 failure_reason=failure_reason,
             )
 
-
         # Determine final status
         if self._halted:
             final_status = "manually_halted"
@@ -903,9 +876,7 @@ class DBALoopWorker:
         elif iterations_completed >= config.max_iterations:
             # Max iterations reached without achieving goal
             final_status = "completed"
-            failure_reason = (
-                f"Maximum iteration limit ({config.max_iterations}) reached"
-            )
+            failure_reason = f"Maximum iteration limit ({config.max_iterations}) reached"
             await self.audit_logger.log(
                 run_id=run_id,
                 actor_type="system",
@@ -950,7 +921,6 @@ class DBALoopWorker:
             failure_reason=failure_reason,
         )
 
-
     async def halt_run(self, run_id: UUID) -> dict:
         """
         Halt an active run within 10 seconds.
@@ -979,9 +949,7 @@ class DBALoopWorker:
         current_status = row["status"]
 
         # Reject halt on completed/stopped runs
-        if current_status in (
-            "completed", "failed", "manually_halted", "timed_out"
-        ):
+        if current_status in ("completed", "failed", "manually_halted", "timed_out"):
             return {
                 "success": False,
                 "message": (
@@ -1022,7 +990,6 @@ class DBALoopWorker:
             "status": "manually_halted",
             "previous_step": row["current_step"],
         }
-
 
 
 async def mark_unresponsive_runs(pool=None) -> List[UUID]:

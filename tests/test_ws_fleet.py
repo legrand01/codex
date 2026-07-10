@@ -10,18 +10,14 @@ Tests cover:
 Requirements: 1.3, 2.2
 """
 
-import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
-from backend.api.ws_fleet import FleetConnectionManager, fleet_manager
+from backend.api.ws_fleet import FleetConnectionManager
 from backend.main import app
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for FleetConnectionManager
@@ -86,14 +82,16 @@ class TestFleetConnectionManager:
         await manager.connect(ws1)
         await manager.connect(ws2)
 
-        test_message = json.dumps({
-            "event_type": "connection_status_change",
-            "host_id": "test-id",
-            "hostname": "test-host",
-            "old_status": "connected",
-            "new_status": "disconnected",
-            "timestamp": "2024-01-01T00:00:00Z",
-        })
+        test_message = json.dumps(
+            {
+                "event_type": "connection_status_change",
+                "host_id": "test-id",
+                "hostname": "test-host",
+                "old_status": "connected",
+                "new_status": "disconnected",
+                "timestamp": "2024-01-01T00:00:00Z",
+            }
+        )
 
         await manager.broadcast(test_message)
 

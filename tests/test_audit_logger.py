@@ -13,8 +13,7 @@ for the database connection pool to test the service logic in isolation.
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -25,7 +24,6 @@ from backend.services.audit_logger import (
     AuditLoggerError,
     AuditValidationError,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -267,6 +265,7 @@ class TestAuditLoggerLog:
     @pytest.mark.asyncio
     async def test_log_database_error_raises_audit_logger_error(self):
         """log() should wrap database errors in AuditLoggerError."""
+
         # Create a pool that raises on acquire
         class FailingPool:
             def acquire(self):
@@ -355,7 +354,7 @@ class TestAuditLoggerQuery:
     @pytest.mark.asyncio
     async def test_query_with_run_id_filter(self):
         """query() should filter by run_id when provided."""
-        entries = await self.logger.query(run_id=self.run_id)
+        await self.logger.query(run_id=self.run_id)
 
         # Verify the query included a run_id filter
         assert len(self.mock_conn.queries) == 1
@@ -368,7 +367,7 @@ class TestAuditLoggerQuery:
         start = self.now - timedelta(hours=1)
         end = self.now
 
-        entries = await self.logger.query(time_range=(start, end))
+        await self.logger.query(time_range=(start, end))
 
         # Verify the query included time range filters
         assert len(self.mock_conn.queries) == 1
@@ -382,7 +381,7 @@ class TestAuditLoggerQuery:
         start = self.now - timedelta(hours=1)
         end = self.now
 
-        entries = await self.logger.query(run_id=self.run_id, time_range=(start, end))
+        await self.logger.query(run_id=self.run_id, time_range=(start, end))
 
         # Verify query has all filters
         query_str = self.mock_conn.queries[0][1]
@@ -393,7 +392,7 @@ class TestAuditLoggerQuery:
     @pytest.mark.asyncio
     async def test_query_with_pagination(self):
         """query() should respect limit and offset parameters."""
-        entries = await self.logger.query(limit=10, offset=5)
+        await self.logger.query(limit=10, offset=5)
 
         # Verify pagination params were passed
         query_args = self.mock_conn.queries[0][2]
@@ -403,7 +402,7 @@ class TestAuditLoggerQuery:
     @pytest.mark.asyncio
     async def test_query_default_pagination(self):
         """query() should use default limit=100 and offset=0."""
-        entries = await self.logger.query()
+        await self.logger.query()
 
         query_args = self.mock_conn.queries[0][2]
         assert 100 in query_args  # default limit

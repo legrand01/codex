@@ -17,7 +17,6 @@ Usage:
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 import asyncpg
@@ -61,8 +60,7 @@ def get_migration_files() -> list:
         return []
 
     migration_files = sorted(
-        f for f in MIGRATIONS_DIR.iterdir()
-        if f.suffix == ".sql" and not f.name.startswith("_")
+        f for f in MIGRATIONS_DIR.iterdir() if f.suffix == ".sql" and not f.name.startswith("_")
     )
     return migration_files
 

@@ -12,9 +12,9 @@ import enum
 import json
 import logging
 import os
-import time
 import threading
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
@@ -33,17 +33,19 @@ DEFAULT_PROBE_INTERVAL_SECONDS = 30.0
 
 class CircuitState(str, enum.Enum):
     """Circuit breaker states."""
-    CLOSED = "closed"       # Normal operation, evidence sent immediately
-    OPEN = "open"           # Disconnected, buffer evidence locally
+
+    CLOSED = "closed"  # Normal operation, evidence sent immediately
+    OPEN = "open"  # Disconnected, buffer evidence locally
     HALF_OPEN = "half_open"  # Probing, attempt one send
 
 
 @dataclass
 class BufferEntry:
     """A single buffered evidence entry with metadata."""
+
     timestamp: float  # Unix timestamp for ordering
-    data: dict        # The evidence snapshot
-    size_bytes: int   # Size of the serialized entry on disk
+    data: dict  # The evidence snapshot
+    size_bytes: int  # Size of the serialized entry on disk
 
 
 class EvidenceBuffer:
@@ -444,6 +446,6 @@ class BufferedEvidenceSender:
             try:
                 success = send_fn(entry)
                 if not success:
-                    logger.warning(f"Failed to flush evidence entry, skipping")
+                    logger.warning("Failed to flush evidence entry, skipping")
             except Exception as e:
                 logger.warning(f"Exception during flush: {e}, skipping entry")

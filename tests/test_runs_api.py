@@ -11,8 +11,7 @@ Tests cover:
 Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6
 """
 
-import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -28,7 +27,6 @@ async def api_client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
-
 
 
 def _mock_db_dependency():
@@ -58,10 +56,12 @@ class TestStartRunEndpoint:
         with patch("backend.services.loop_worker.DBALoopWorker", return_value=mock_worker):
             with patch("backend.dependencies.get_pool") as mock_get_pool:
                 mock_pool = MagicMock()
-                mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                    __aenter__=AsyncMock(return_value=mock_conn),
-                    __aexit__=AsyncMock(return_value=None),
-                ))
+                mock_pool.acquire = MagicMock(
+                    return_value=AsyncMock(
+                        __aenter__=AsyncMock(return_value=mock_conn),
+                        __aexit__=AsyncMock(return_value=None),
+                    )
+                )
                 mock_get_pool.return_value = mock_pool
                 response = await api_client.post(
                     "/api/v1/runs/",
@@ -80,10 +80,12 @@ class TestStartRunEndpoint:
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
-            mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_conn),
-                __aexit__=AsyncMock(return_value=None),
-            ))
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
             mock_get_pool.return_value = mock_pool
             response = await api_client.post(
                 "/api/v1/runs/",
@@ -103,10 +105,12 @@ class TestStartRunEndpoint:
         with patch("backend.services.loop_worker.DBALoopWorker", return_value=mock_worker):
             with patch("backend.dependencies.get_pool") as mock_get_pool:
                 mock_pool = MagicMock()
-                mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                    __aenter__=AsyncMock(return_value=mock_conn),
-                    __aexit__=AsyncMock(return_value=None),
-                ))
+                mock_pool.acquire = MagicMock(
+                    return_value=AsyncMock(
+                        __aenter__=AsyncMock(return_value=mock_conn),
+                        __aexit__=AsyncMock(return_value=None),
+                    )
+                )
                 mock_get_pool.return_value = mock_pool
                 response = await api_client.post(
                     "/api/v1/runs/",
@@ -129,10 +133,12 @@ class TestStartRunEndpoint:
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
-            mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_conn),
-                __aexit__=AsyncMock(return_value=None),
-            ))
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
             mock_get_pool.return_value = mock_pool
             response = await api_client.post(
                 "/api/v1/runs/",
@@ -140,7 +146,6 @@ class TestStartRunEndpoint:
             )
 
         assert response.status_code == 422
-
 
 
 # --- Halt Run Tests ---
@@ -155,12 +160,14 @@ class TestHaltRunEndpoint:
         run_id = uuid4()
 
         mock_worker = MagicMock()
-        mock_worker.halt_run = AsyncMock(return_value={
-            "success": True,
-            "message": f"Run '{run_id}' halted successfully",
-            "status": "manually_halted",
-            "previous_step": "observe",
-        })
+        mock_worker.halt_run = AsyncMock(
+            return_value={
+                "success": True,
+                "message": f"Run '{run_id}' halted successfully",
+                "status": "manually_halted",
+                "previous_step": "observe",
+            }
+        )
 
         mock_conn = _mock_db_dependency()
 
@@ -168,10 +175,12 @@ class TestHaltRunEndpoint:
             with patch("backend.services.loop_worker.get_loop_worker", return_value=mock_worker):
                 with patch("backend.dependencies.get_pool") as mock_get_pool:
                     mock_pool = MagicMock()
-                    mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                        __aenter__=AsyncMock(return_value=mock_conn),
-                        __aexit__=AsyncMock(return_value=None),
-                    ))
+                    mock_pool.acquire = MagicMock(
+                        return_value=AsyncMock(
+                            __aenter__=AsyncMock(return_value=mock_conn),
+                            __aexit__=AsyncMock(return_value=None),
+                        )
+                    )
                     mock_get_pool.return_value = mock_pool
                     response = await api_client.post(f"/api/v1/runs/{run_id}/halt")
 
@@ -186,11 +195,13 @@ class TestHaltRunEndpoint:
         run_id = uuid4()
 
         mock_worker = MagicMock()
-        mock_worker.halt_run = AsyncMock(return_value={
-            "success": False,
-            "message": f"Run '{run_id}' is no longer active (current status: completed)",
-            "status": "completed",
-        })
+        mock_worker.halt_run = AsyncMock(
+            return_value={
+                "success": False,
+                "message": f"Run '{run_id}' is no longer active (current status: completed)",
+                "status": "completed",
+            }
+        )
 
         mock_conn = _mock_db_dependency()
 
@@ -198,10 +209,12 @@ class TestHaltRunEndpoint:
             with patch("backend.services.loop_worker.get_loop_worker", return_value=mock_worker):
                 with patch("backend.dependencies.get_pool") as mock_get_pool:
                     mock_pool = MagicMock()
-                    mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                        __aenter__=AsyncMock(return_value=mock_conn),
-                        __aexit__=AsyncMock(return_value=None),
-                    ))
+                    mock_pool.acquire = MagicMock(
+                        return_value=AsyncMock(
+                            __aenter__=AsyncMock(return_value=mock_conn),
+                            __aexit__=AsyncMock(return_value=None),
+                        )
+                    )
                     mock_get_pool.return_value = mock_pool
                     response = await api_client.post(f"/api/v1/runs/{run_id}/halt")
 
@@ -213,11 +226,13 @@ class TestHaltRunEndpoint:
         run_id = uuid4()
 
         mock_worker = MagicMock()
-        mock_worker.halt_run = AsyncMock(return_value={
-            "success": False,
-            "message": f"Run '{run_id}' not found",
-            "status": "not_found",
-        })
+        mock_worker.halt_run = AsyncMock(
+            return_value={
+                "success": False,
+                "message": f"Run '{run_id}' not found",
+                "status": "not_found",
+            }
+        )
 
         mock_conn = _mock_db_dependency()
 
@@ -225,15 +240,16 @@ class TestHaltRunEndpoint:
             with patch("backend.services.loop_worker.get_loop_worker", return_value=mock_worker):
                 with patch("backend.dependencies.get_pool") as mock_get_pool:
                     mock_pool = MagicMock()
-                    mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                        __aenter__=AsyncMock(return_value=mock_conn),
-                        __aexit__=AsyncMock(return_value=None),
-                    ))
+                    mock_pool.acquire = MagicMock(
+                        return_value=AsyncMock(
+                            __aenter__=AsyncMock(return_value=mock_conn),
+                            __aexit__=AsyncMock(return_value=None),
+                        )
+                    )
                     mock_get_pool.return_value = mock_pool
                     response = await api_client.post(f"/api/v1/runs/{run_id}/halt")
 
         assert response.status_code == 409
-
 
 
 # --- Get Run Status Tests ---
@@ -249,24 +265,28 @@ class TestGetRunStatus:
         now = datetime.now(timezone.utc)
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={
-            "id": run_id,
-            "goal": "Optimize queries",
-            "status": "running",
-            "current_step": "observe",
-            "current_iteration": 1,
-            "max_iterations": 10,
-            "started_at": now - timedelta(seconds=30),
-            "last_step_transition_at": now - timedelta(seconds=5),
-            "failure_reason": None,
-        })
+        mock_conn.fetchrow = AsyncMock(
+            return_value={
+                "id": run_id,
+                "goal": "Optimize queries",
+                "status": "running",
+                "current_step": "observe",
+                "current_iteration": 1,
+                "max_iterations": 10,
+                "started_at": now - timedelta(seconds=30),
+                "last_step_transition_at": now - timedelta(seconds=5),
+                "failure_reason": None,
+            }
+        )
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
-            mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_conn),
-                __aexit__=AsyncMock(return_value=None),
-            ))
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
             mock_get_pool.return_value = mock_pool
 
             response = await api_client.get(f"/api/v1/runs/{run_id}")
@@ -289,10 +309,12 @@ class TestGetRunStatus:
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
-            mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_conn),
-                __aexit__=AsyncMock(return_value=None),
-            ))
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
             mock_get_pool.return_value = mock_pool
 
             response = await api_client.get(f"/api/v1/runs/{run_id}")
@@ -306,24 +328,30 @@ class TestGetRunStatus:
         now = datetime.now(timezone.utc)
 
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={
-            "id": run_id,
-            "goal": "Optimize queries",
-            "status": "failed",
-            "current_step": "safety_check",
-            "current_iteration": 1,
-            "max_iterations": 10,
-            "started_at": now - timedelta(seconds=60),
-            "last_step_transition_at": now - timedelta(seconds=10),
-            "failure_reason": "Guardrail check failed at stage 'allowlist': Setting not allowed",
-        })
+        mock_conn.fetchrow = AsyncMock(
+            return_value={
+                "id": run_id,
+                "goal": "Optimize queries",
+                "status": "failed",
+                "current_step": "safety_check",
+                "current_iteration": 1,
+                "max_iterations": 10,
+                "started_at": now - timedelta(seconds=60),
+                "last_step_transition_at": now - timedelta(seconds=10),
+                "failure_reason": (
+                    "Guardrail check failed at stage 'allowlist': Setting not allowed"
+                ),
+            }
+        )
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
-            mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_conn),
-                __aexit__=AsyncMock(return_value=None),
-            ))
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
             mock_get_pool.return_value = mock_pool
 
             response = await api_client.get(f"/api/v1/runs/{run_id}")
@@ -332,7 +360,6 @@ class TestGetRunStatus:
         data = response.json()
         assert data["guardrail_violation"] is not None
         assert "guardrail" in data["guardrail_violation"]["reason"].lower()
-
 
 
 # --- List Active Runs Tests ---
@@ -349,10 +376,12 @@ class TestListActiveRuns:
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
-            mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_conn),
-                __aexit__=AsyncMock(return_value=None),
-            ))
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
             mock_get_pool.return_value = mock_pool
 
             response = await api_client.get("/api/v1/runs/")
@@ -369,24 +398,28 @@ class TestListActiveRuns:
         now = datetime.now(timezone.utc)
 
         mock_conn = AsyncMock()
-        mock_conn.fetch = AsyncMock(return_value=[
-            {
-                "id": run_id,
-                "goal": "Fix performance",
-                "status": "running",
-                "current_step": "diagnose",
-                "current_iteration": 2,
-                "started_at": now - timedelta(seconds=120),
-                "last_step_transition_at": now - timedelta(seconds=10),
-            }
-        ])
+        mock_conn.fetch = AsyncMock(
+            return_value=[
+                {
+                    "id": run_id,
+                    "goal": "Fix performance",
+                    "status": "running",
+                    "current_step": "diagnose",
+                    "current_iteration": 2,
+                    "started_at": now - timedelta(seconds=120),
+                    "last_step_transition_at": now - timedelta(seconds=10),
+                }
+            ]
+        )
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
-            mock_pool.acquire = MagicMock(return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_conn),
-                __aexit__=AsyncMock(return_value=None),
-            ))
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
             mock_get_pool.return_value = mock_pool
 
             response = await api_client.get("/api/v1/runs/")

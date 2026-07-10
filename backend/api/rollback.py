@@ -22,7 +22,6 @@ from backend.services.audit_logger import get_audit_logger
 from backend.services.rollback_service import (
     RollbackEligibilityError,
     RollbackInstructionsError,
-    RollbackResult,
     RollbackStatus,
     RollbackTimeoutError,
     execute_rollback,

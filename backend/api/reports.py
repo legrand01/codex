@@ -18,7 +18,6 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.db.pool import get_pool
-from backend.models.reports import DBAReport
 from backend.services.audit_logger import get_audit_logger
 from backend.services.report_generator import (
     ReportGenerationError,
@@ -128,9 +127,7 @@ async def search_reports(
             conditions.append(f"({' AND '.join(keyword_conditions)})")
 
         # Only return non-expired reports (retention >= 90 days)
-        conditions.append(
-            f"(expires_at IS NULL OR expires_at > ${param_idx})"
-        )
+        conditions.append(f"(expires_at IS NULL OR expires_at > ${param_idx})")
         params.append(datetime.now(timezone.utc))
         param_idx += 1
 
@@ -255,9 +252,7 @@ async def get_report(run_id: UUID) -> ReportResponse:
 
         except ReportGenerationError as gen_err:
             # Log failure and persist raw run data for regeneration
-            logger.error(
-                f"Report generation failed for run {run_id}: {gen_err}"
-            )
+            logger.error(f"Report generation failed for run {run_id}: {gen_err}")
 
             # Try to log the failure in audit log
             try:

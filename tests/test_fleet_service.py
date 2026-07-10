@@ -8,14 +8,11 @@ Tests the pure functions:
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from backend.models.enums import ConnectionStatus, HealthStatus
 from backend.services.fleet_service import (
     classify_connection_status,
     evaluate_health_thresholds,
 )
-
 
 # =============================================================================
 # Tests for classify_connection_status

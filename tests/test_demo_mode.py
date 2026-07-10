@@ -31,7 +31,6 @@ from backend.services.demo_mode import (
     is_synthetic_address,
 )
 
-
 # =============================================================================
 # Helper to reset demo mode state between tests
 # =============================================================================
@@ -159,7 +158,9 @@ class TestActivateDemoMode:
         evidence = data["evidence"]
 
         # At least one evidence snapshot should have quality_score below 0.5
-        low_quality = [e for e in evidence if e["quality_score"] is not None and e["quality_score"] < 0.5]
+        low_quality = [
+            e for e in evidence if e["quality_score"] is not None and e["quality_score"] < 0.5
+        ]
         assert len(low_quality) >= 1
 
     def test_activation_seeds_loop_runs_with_success_and_blocked(self):
@@ -443,7 +444,10 @@ class TestDemoDataQuality:
         """Loop runs must have valid workflow step values."""
         activate_demo_mode()
         data = get_demo_data()
-        valid_steps = {step.value for step in __import__("backend.models.enums", fromlist=["WorkflowStep"]).WorkflowStep}
+        valid_steps = {
+            step.value
+            for step in __import__("backend.models.enums", fromlist=["WorkflowStep"]).WorkflowStep
+        }
         for run in data["runs"]:
             assert run["current_step"] in valid_steps
 

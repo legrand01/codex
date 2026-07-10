@@ -75,7 +75,6 @@ class TestGoalDecomposition:
             assert len(steps) <= max_steps
 
 
-
 # --- Halt Functionality Tests ---
 
 
@@ -88,10 +87,12 @@ class TestHaltRun:
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(return_value=None)
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         worker = DBALoopWorker(pool=mock_pool)
         result = await worker.halt_run(uuid4())
@@ -104,15 +105,19 @@ class TestHaltRun:
         run_id = uuid4()
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={
-            "id": run_id,
-            "status": "completed",
-            "current_step": "report",
-        })
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_conn.fetchrow = AsyncMock(
+            return_value={
+                "id": run_id,
+                "status": "completed",
+                "current_step": "report",
+            }
+        )
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         worker = DBALoopWorker(pool=mock_pool)
         result = await worker.halt_run(run_id)
@@ -125,15 +130,19 @@ class TestHaltRun:
         run_id = uuid4()
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={
-            "id": run_id,
-            "status": "failed",
-            "current_step": "observe",
-        })
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_conn.fetchrow = AsyncMock(
+            return_value={
+                "id": run_id,
+                "status": "failed",
+                "current_step": "observe",
+            }
+        )
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         worker = DBALoopWorker(pool=mock_pool)
         result = await worker.halt_run(run_id)
@@ -146,15 +155,19 @@ class TestHaltRun:
         run_id = uuid4()
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={
-            "id": run_id,
-            "status": "manually_halted",
-            "current_step": "diagnose",
-        })
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_conn.fetchrow = AsyncMock(
+            return_value={
+                "id": run_id,
+                "status": "manually_halted",
+                "current_step": "diagnose",
+            }
+        )
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         worker = DBALoopWorker(pool=mock_pool)
         result = await worker.halt_run(run_id)
@@ -166,16 +179,20 @@ class TestHaltRun:
         run_id = uuid4()
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={
-            "id": run_id,
-            "status": "running",
-            "current_step": "observe",
-        })
+        mock_conn.fetchrow = AsyncMock(
+            return_value={
+                "id": run_id,
+                "status": "running",
+                "current_step": "observe",
+            }
+        )
         mock_conn.execute = AsyncMock()
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         mock_audit = AsyncMock()
         mock_audit.log = AsyncMock()
@@ -185,7 +202,6 @@ class TestHaltRun:
         assert result["success"] is True
         assert result["status"] == "manually_halted"
         assert worker._halted is True
-
 
 
 # --- Unresponsive Detection Tests ---
@@ -229,14 +245,23 @@ class TestEvidenceCollection:
 
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
-        mock_conn.fetch = AsyncMock(return_value=[
-            {"id": uuid4(), "evidence_type": "pg_settings",
-             "collected_at": "2024-01-01", "data": {}, "quality_score": 0.9},
-        ])
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_conn.fetch = AsyncMock(
+            return_value=[
+                {
+                    "id": uuid4(),
+                    "evidence_type": "pg_settings",
+                    "collected_at": "2024-01-01",
+                    "data": {},
+                    "quality_score": 0.9,
+                },
+            ]
+        )
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         worker = DBALoopWorker(pool=mock_pool)
         result = await worker._collect_evidence(run_id, host_id)
@@ -260,15 +285,22 @@ class TestEvidenceCollection:
             if call_count == 1:
                 raise Exception("Connection error")
             return [
-                {"id": uuid4(), "evidence_type": "pg_settings",
-                 "collected_at": "2024-01-01", "data": {}, "quality_score": 0.9},
+                {
+                    "id": uuid4(),
+                    "evidence_type": "pg_settings",
+                    "collected_at": "2024-01-01",
+                    "data": {},
+                    "quality_score": 0.9,
+                },
             ]
 
         mock_conn.fetch = mock_fetch
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         worker = DBALoopWorker(pool=mock_pool)
         # Patch the sleep to avoid waiting
@@ -286,17 +318,18 @@ class TestEvidenceCollection:
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.fetch = AsyncMock(side_effect=Exception("Persistent error"))
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         worker = DBALoopWorker(pool=mock_pool)
         with patch("backend.services.loop_worker.asyncio.sleep", new_callable=AsyncMock):
             result = await worker._collect_evidence(run_id, host_id)
         assert result.success is False
         assert "failed after retry" in result.error.lower()
-
 
 
 # --- Start Run Tests ---
@@ -316,10 +349,12 @@ class TestStartRun:
         mock_conn.fetchrow = AsyncMock(return_value={"id": host_id})
         # For evidence collection
         mock_conn.fetch = AsyncMock(return_value=[])
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         mock_audit = AsyncMock()
         mock_audit.log = AsyncMock()
@@ -330,9 +365,7 @@ class TestStartRun:
         # Patch sleep and redis to avoid delays
         with patch("backend.services.loop_worker.asyncio.sleep", new_callable=AsyncMock):
             with patch("backend.db.redis_manager.get_redis_client", return_value=None):
-                result = await worker.start_run(
-                    goal="Test goal", config=config, host_id=host_id
-                )
+                result = await worker.start_run(goal="Test goal", config=config, host_id=host_id)
 
         assert isinstance(result, RunResult)
         assert result.goal == "Test goal"
@@ -349,14 +382,23 @@ class TestStartRun:
         mock_conn = AsyncMock()
         mock_conn.execute = AsyncMock()
         mock_conn.fetchrow = AsyncMock(return_value={"id": host_id})
-        mock_conn.fetch = AsyncMock(return_value=[
-            {"id": uuid4(), "evidence_type": "pg_settings",
-             "collected_at": "2024-01-01", "data": {}, "quality_score": 0.9},
-        ])
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_conn.fetch = AsyncMock(
+            return_value=[
+                {
+                    "id": uuid4(),
+                    "evidence_type": "pg_settings",
+                    "collected_at": "2024-01-01",
+                    "data": {},
+                    "quality_score": 0.9,
+                },
+            ]
+        )
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         mock_audit = AsyncMock()
         mock_audit.log = AsyncMock()
@@ -380,10 +422,12 @@ class TestStartRun:
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.execute = AsyncMock()
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         mock_audit = AsyncMock()
         mock_audit.log = AsyncMock()
@@ -439,10 +483,12 @@ class TestStartRun:
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.execute = AsyncMock()
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         mock_audit = AsyncMock()
         mock_audit.log = AsyncMock()
@@ -456,9 +502,7 @@ class TestStartRun:
                 "proposed_value": "64MB",
             }
         ]
-        rollback_instructions = [
-            {"setting_name": "work_mem", "rollback_value": "4MB"}
-        ]
+        rollback_instructions = [{"setting_name": "work_mem", "rollback_value": "4MB"}]
         propose_result = StepResult(
             step=WorkflowStep.PROPOSE_PLAN,
             success=True,
@@ -512,10 +556,12 @@ class TestGuardrailIntegration:
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(return_value=None)
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         mock_audit = AsyncMock()
         mock_audit.log = AsyncMock()
@@ -552,10 +598,12 @@ class TestGuardrailIntegration:
         mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.execute = AsyncMock()
-        mock_pool.acquire = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_conn),
-            __aexit__=AsyncMock(return_value=None),
-        ))
+        mock_pool.acquire = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_conn),
+                __aexit__=AsyncMock(return_value=None),
+            )
+        )
 
         mock_audit = AsyncMock()
         mock_audit.log = AsyncMock()

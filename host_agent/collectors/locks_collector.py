@@ -80,8 +80,8 @@ async def collect_locks(
             locks.append(lock_entry)
 
         # Compute summary metrics
-        granted_count = sum(1 for l in locks if l["granted"])
-        waiting_count = sum(1 for l in locks if not l["granted"])
+        granted_count = sum(1 for lock in locks if lock["granted"])
+        waiting_count = sum(1 for lock in locks if not lock["granted"])
 
         return {
             "host_id": host_id,

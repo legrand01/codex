@@ -204,9 +204,7 @@ async def register_host(registration: HostRegistration, db=Depends(get_db)) -> H
     Requirements: 1.1, 1.4
     """
     # Check for duplicate hostname
-    existing = await db.fetchrow(
-        "SELECT id FROM hosts WHERE hostname = $1", registration.hostname
-    )
+    existing = await db.fetchrow("SELECT id FROM hosts WHERE hostname = $1", registration.hostname)
     if existing:
         raise HTTPException(
             status_code=409,

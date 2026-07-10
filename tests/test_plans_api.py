@@ -10,7 +10,6 @@ Tests cover:
 Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 """
 
-import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,7 +24,6 @@ from backend.api.plans import (
 )
 from backend.main import app
 from backend.models.enums import PlanStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -463,13 +461,16 @@ async def test_approve_plan_records_audit_log():
             mock_audit_logger = MagicMock()
             mock_audit_logger.log = AsyncMock()
 
-            with patch(
-                "backend.api.plans._forward_with_retry",
-                new_callable=AsyncMock,
-                return_value=True,
-            ), patch(
-                "backend.services.audit_logger.get_audit_logger",
-                return_value=mock_audit_logger,
+            with (
+                patch(
+                    "backend.api.plans._forward_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=True,
+                ),
+                patch(
+                    "backend.services.audit_logger.get_audit_logger",
+                    return_value=mock_audit_logger,
+                ),
             ):
                 response = await client.post(
                     f"/api/v1/plans/{plan_id}/approve",
@@ -508,13 +509,16 @@ async def test_approve_plan_forwarding_failure():
             mock_audit_logger = MagicMock()
             mock_audit_logger.log = AsyncMock()
 
-            with patch(
-                "backend.api.plans._forward_with_retry",
-                new_callable=AsyncMock,
-                return_value=False,
-            ), patch(
-                "backend.services.audit_logger.get_audit_logger",
-                return_value=mock_audit_logger,
+            with (
+                patch(
+                    "backend.api.plans._forward_with_retry",
+                    new_callable=AsyncMock,
+                    return_value=False,
+                ),
+                patch(
+                    "backend.services.audit_logger.get_audit_logger",
+                    return_value=mock_audit_logger,
+                ),
             ):
                 response = await client.post(
                     f"/api/v1/plans/{plan_id}/approve",
@@ -550,12 +554,15 @@ async def test_reject_plan_success():
             mock_audit_logger = MagicMock()
             mock_audit_logger.log = AsyncMock()
 
-            with patch(
-                "backend.services.audit_logger.get_audit_logger",
-                return_value=mock_audit_logger,
-            ), patch(
-                "backend.db.redis_manager.get_redis_client",
-                return_value=None,
+            with (
+                patch(
+                    "backend.services.audit_logger.get_audit_logger",
+                    return_value=mock_audit_logger,
+                ),
+                patch(
+                    "backend.db.redis_manager.get_redis_client",
+                    return_value=None,
+                ),
             ):
                 response = await client.post(
                     f"/api/v1/plans/{plan_id}/reject",
@@ -644,12 +651,15 @@ async def test_reject_plan_reason_exactly_10_chars():
             mock_audit_logger = MagicMock()
             mock_audit_logger.log = AsyncMock()
 
-            with patch(
-                "backend.services.audit_logger.get_audit_logger",
-                return_value=mock_audit_logger,
-            ), patch(
-                "backend.db.redis_manager.get_redis_client",
-                return_value=None,
+            with (
+                patch(
+                    "backend.services.audit_logger.get_audit_logger",
+                    return_value=mock_audit_logger,
+                ),
+                patch(
+                    "backend.db.redis_manager.get_redis_client",
+                    return_value=None,
+                ),
             ):
                 response = await client.post(
                     f"/api/v1/plans/{plan_id}/reject",
@@ -729,12 +739,15 @@ async def test_reject_plan_records_audit_log():
             mock_audit_logger = MagicMock()
             mock_audit_logger.log = AsyncMock()
 
-            with patch(
-                "backend.services.audit_logger.get_audit_logger",
-                return_value=mock_audit_logger,
-            ), patch(
-                "backend.db.redis_manager.get_redis_client",
-                return_value=None,
+            with (
+                patch(
+                    "backend.services.audit_logger.get_audit_logger",
+                    return_value=mock_audit_logger,
+                ),
+                patch(
+                    "backend.db.redis_manager.get_redis_client",
+                    return_value=None,
+                ),
             ):
                 response = await client.post(
                     f"/api/v1/plans/{plan_id}/reject",

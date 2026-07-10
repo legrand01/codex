@@ -14,8 +14,6 @@ Covers:
 Requirements: 9.1, 9.2
 """
 
-import pytest
-
 from backend.services.guardrail_engine import calculate_risk_score
 
 
@@ -71,7 +69,7 @@ class TestRiskScoreBasicCalculation:
         assert multi_result.score > single_result.score
 
     def test_primary_scores_higher_than_replica(self):
-        """A primary host should produce a higher risk score than an identical change on a replica."""
+        """A primary host should score higher than an identical change on a replica."""
         proposed_changes = [
             {"setting_name": "work_mem", "proposed_value": 4500, "current_value": 4096}
         ]
@@ -166,7 +164,9 @@ class TestRiskScoreBlocking:
         # We need total_risk = 70
         # With one setting: deviation_pct * 1.0 * 1.0 = 70 → deviation_pct = 70
         # |proposed - current| / max(|current|, 1) * 100 = 70
-        # If current = 100: |proposed - 100| / 100 * 100 = 70 → |proposed - 100| = 70 → proposed = 170
+        # If current = 100:
+        # |proposed - 100| / 100 * 100 = 70
+        # |proposed - 100| = 70 -> proposed = 170
         proposed_changes = [
             {"setting_name": "work_mem", "proposed_value": 170, "current_value": 100}
         ]
@@ -238,9 +238,7 @@ class TestRiskScoreZeroDeviation:
 
     def test_zero_current_value_uses_denominator_of_one(self):
         """When current value is 0, the denominator should be 1 to avoid division by zero."""
-        proposed_changes = [
-            {"setting_name": "work_mem", "proposed_value": 5, "current_value": 0}
-        ]
+        proposed_changes = [{"setting_name": "work_mem", "proposed_value": 5, "current_value": 0}]
 
         result = calculate_risk_score(
             proposed_changes=proposed_changes,
@@ -324,9 +322,7 @@ class TestRiskScoreCurrentSettingsLookup:
 
     def test_uses_current_settings_dict_when_no_current_value_in_change(self):
         """When current_value is not in the change dict, look it up from current_settings."""
-        proposed_changes = [
-            {"setting_name": "work_mem", "proposed_value": 8192}
-        ]
+        proposed_changes = [{"setting_name": "work_mem", "proposed_value": 8192}]
         current_settings = {"work_mem": 4096}
 
         result = calculate_risk_score(

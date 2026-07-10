@@ -89,8 +89,7 @@ async def get_pubsub() -> aioredis.client.PubSub:
     global _pubsub
     if _redis_client is None:
         raise RuntimeError(
-            "Redis client is not initialized. "
-            "Ensure the application lifespan has started."
+            "Redis client is not initialized. Ensure the application lifespan has started."
         )
     if _pubsub is None:
         _pubsub = _redis_client.pubsub()
@@ -239,9 +238,7 @@ async def stream_create_consumer_group(
         raise RuntimeError("Redis client is not initialized.")
 
     try:
-        await _redis_client.xgroup_create(
-            stream, group, id=start_id, mkstream=mkstream
-        )
+        await _redis_client.xgroup_create(stream, group, id=start_id, mkstream=mkstream)
         logger.info(f"Consumer group '{group}' created for stream '{stream}'.")
         return True
     except aioredis.ResponseError as e:

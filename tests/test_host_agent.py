@@ -16,10 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Adjust import path for host-agent module (uses hyphen in directory name)
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "host-agent")
-)
+# Adjust import path for the host agent module.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "host_agent"))
 
 from agent import HostAgent
 from config import AgentConfig, ConfigValidationError
@@ -66,7 +64,6 @@ class MockConnection:
                 source="configuration file",
             ),
         ]
-
 
         self._default_db_stats = [
             MockRecord(
@@ -141,7 +138,6 @@ class MockConnection:
         return None
 
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================
@@ -194,7 +190,6 @@ class TestAgentConfig:
         with pytest.raises(ConfigValidationError, match="host_id"):
             valid_config.validate()
 
-
     def test_pg_settings_interval_below_range(self, valid_config):
         """pg_settings_interval below 10 should raise error."""
         valid_config.pg_settings_interval = 9
@@ -243,16 +238,15 @@ class TestAgentConfig:
         with pytest.raises(ConfigValidationError, match="os_metrics_interval"):
             valid_config.validate()
 
-
     def test_boundary_values_accepted(self):
         """Boundary values at edges of ranges should be accepted."""
         config = AgentConfig(
             host_id="test",
             pg_connection_string="postgresql://user:pass@localhost:5432/db",
-            pg_settings_interval=10,   # min
-            pg_stats_interval=5,        # min
-            locks_replication_interval=5, # min
-            os_metrics_interval=5,      # min
+            pg_settings_interval=10,  # min
+            pg_stats_interval=5,  # min
+            locks_replication_interval=5,  # min
+            os_metrics_interval=5,  # min
         )
         config.validate()  # Should not raise
 
@@ -260,9 +254,9 @@ class TestAgentConfig:
             host_id="test",
             pg_connection_string="postgresql://user:pass@localhost:5432/db",
             pg_settings_interval=3600,  # max
-            pg_stats_interval=600,      # max
-            locks_replication_interval=300, # max
-            os_metrics_interval=300,    # max
+            pg_stats_interval=600,  # max
+            locks_replication_interval=300,  # max
+            os_metrics_interval=300,  # max
         )
         config2.validate()  # Should not raise
 
@@ -298,7 +292,6 @@ class TestAgentConfig:
         valid_config.host_id = ""
         valid_config.hostname = "w2j"
         valid_config.validate()
-
 
 
 # ============================================================================
@@ -351,7 +344,6 @@ class TestPgSettingsCollector:
 
         result = await agent.collect_pg_settings()
         assert result is None
-
 
 
 class TestPgStatsCollector:
@@ -416,7 +408,6 @@ class TestLocksCollector:
         assert collected_at.tzinfo is not None
 
 
-
 class TestReplicationCollector:
     """Tests for replication evidence collector."""
 
@@ -475,7 +466,6 @@ class TestWalCheckpointCollector:
         assert collected_at.tzinfo is not None
 
 
-
 class TestOsMetricsCollector:
     """Tests for OS metrics evidence collector."""
 
@@ -517,7 +507,6 @@ class TestOsMetricsCollector:
         assert result is not None
         assert isinstance(result["data"]["memory_percent"], (int, float))
         assert 0 <= result["data"]["memory_percent"] <= 100
-
 
 
 # ============================================================================
@@ -567,7 +556,6 @@ class TestHeartbeat:
         await agent.report_heartbeat()  # Should not raise
 
 
-
 # ============================================================================
 # Role/Version Detection Tests
 # ============================================================================
@@ -581,9 +569,7 @@ class TestRoleVersionDetection:
         """Should detect primary role when pg_is_in_recovery() returns False."""
         # Mock the HTTP client for role reporting
         agent._http_client = MagicMock()
-        agent._http_client.post = AsyncMock(
-            return_value=MagicMock(status_code=200)
-        )
+        agent._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
 
         result = await agent.detect_role_version()
 
@@ -606,9 +592,7 @@ class TestRoleVersionDetection:
         )
         agent = HostAgent(config=valid_config, conn=replica_conn)
         agent._http_client = MagicMock()
-        agent._http_client.post = AsyncMock(
-            return_value=MagicMock(status_code=200)
-        )
+        agent._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
 
         result = await agent.detect_role_version()
 
@@ -632,7 +616,6 @@ class TestRoleVersionDetection:
 
         result = await agent.detect_role_version()
         assert result is None
-
 
 
 # ============================================================================
@@ -674,13 +657,9 @@ class TestEvidenceSnapshotStructure:
         for collector in collectors:
             result = await collector()
             assert result is not None, f"{collector.__name__} returned None"
-            assert "collected_at" in result, (
-                f"{collector.__name__} missing collected_at"
-            )
+            assert "collected_at" in result, f"{collector.__name__} missing collected_at"
             ts = datetime.fromisoformat(result["collected_at"])
-            assert ts.tzinfo is not None, (
-                f"{collector.__name__} timestamp not UTC"
-            )
+            assert ts.tzinfo is not None, f"{collector.__name__} timestamp not UTC"
 
     @pytest.mark.asyncio
     async def test_all_collectors_include_evidence_type(self, agent):

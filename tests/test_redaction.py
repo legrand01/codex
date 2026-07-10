@@ -11,11 +11,8 @@ Requirements: 10.3, 10.6
 import re
 from unittest.mock import patch
 
-import pytest
-
 from backend.services.redaction import (
     REDACTED_PLACEHOLDER,
-    SECRET_PATTERNS,
     redact_secrets,
     redact_with_retry,
     safe_redact,
@@ -181,7 +178,11 @@ class TestRedactBearerTokens:
     """Test redaction of Bearer tokens."""
 
     def test_bearer_token(self):
-        content = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc"
+        content = (
+            "Authorization: Bearer "
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc"
+        )
         result = redact_secrets(content)
         assert "eyJhbGciOiJ" not in result
         assert REDACTED_PLACEHOLDER in result
@@ -228,8 +229,8 @@ class TestMixedContent:
 
     def test_log_entry_with_embedded_secret(self):
         content = (
-            '[2024-01-15T10:30:00Z] INFO: Executing query on host-001. '
-            'Config: password=db_secret_pass123. Status: success.'
+            "[2024-01-15T10:30:00Z] INFO: Executing query on host-001. "
+            "Config: password=db_secret_pass123. Status: success."
         )
         result = redact_secrets(content)
         assert "db_secret_pass123" not in result

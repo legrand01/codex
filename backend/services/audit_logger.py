@@ -97,9 +97,7 @@ class AuditLogger:
             raise AuditValidationError("action_type must be non-empty")
 
         if result not in VALID_RESULTS:
-            raise AuditValidationError(
-                f"result must be one of {VALID_RESULTS}, got '{result}'"
-            )
+            raise AuditValidationError(f"result must be one of {VALID_RESULTS}, got '{result}'")
 
     async def log(
         self,

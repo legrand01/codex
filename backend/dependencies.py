@@ -5,7 +5,7 @@ Provides shared dependencies for database connections, Redis clients,
 and service instances used across API endpoints.
 """
 
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
 import asyncpg
 import redis.asyncio as aioredis
@@ -50,8 +50,7 @@ async def get_redis() -> AsyncGenerator[aioredis.Redis, None]:
     client = get_redis_client()
     if client is None:
         raise RuntimeError(
-            "Redis client is not initialized. "
-            "Ensure the application lifespan has started."
+            "Redis client is not initialized. Ensure the application lifespan has started."
         )
     yield client
 

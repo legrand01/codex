@@ -8,30 +8,24 @@ Covers:
 - Flush after reconnection
 """
 
-import json
 import os
-import shutil
-import tempfile
+
+# Adjust import path for the host agent module.
+import sys
 import time
-import threading
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-# Adjust import path for host-agent module (uses hyphen in directory name)
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "host-agent"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "host_agent"))
 
 from buffer import (
+    DEFAULT_FAILURE_THRESHOLD,
+    DEFAULT_PROBE_INTERVAL_SECONDS,
+    BufferedEvidenceSender,
     CircuitBreaker,
     CircuitState,
     EvidenceBuffer,
-    BufferedEvidenceSender,
-    DEFAULT_FAILURE_THRESHOLD,
-    DEFAULT_FLUSH_TIMEOUT_SECONDS,
-    DEFAULT_MAX_BUFFER_BYTES,
-    DEFAULT_PROBE_INTERVAL_SECONDS,
 )
 
 

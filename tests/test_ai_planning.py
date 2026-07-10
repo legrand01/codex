@@ -423,8 +423,7 @@ class TestGeneratePlan:
         assert plan.rollback_instructions == []
         assert plan.confidence_score == 0.0
         assert (
-            "no actionable" in plan.uncertainty_explanation.lower()
-            or plan.diagnostic_summary != ""
+            "no actionable" in plan.uncertainty_explanation.lower() or plan.diagnostic_summary != ""
         )
 
     @pytest.mark.asyncio
@@ -455,8 +454,10 @@ class TestGeneratePlan:
 
         # Generate plan with rejection feedback mentioning shared_buffers
         plan = await generate_plan(
-            diagnosis, evidence, current_settings,
-            rejection_feedback="Do not change shared_buffers, it was recently tuned"
+            diagnosis,
+            evidence,
+            current_settings,
+            rejection_feedback="Do not change shared_buffers, it was recently tuned",
         )
 
         # shared_buffers should not be in proposed changes
@@ -506,8 +507,7 @@ class TestGeneratePlan:
         plan = await generate_plan(diagnosis, evidence, {})
 
         index_changes = [
-            change for change in plan.proposed_changes
-            if change.get("change_type") == "index"
+            change for change in plan.proposed_changes if change.get("change_type") == "index"
         ]
         assert index_changes
         sql = index_changes[0]["sql_statement"]

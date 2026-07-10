@@ -390,7 +390,7 @@ autonomous-postgres-dba-agent/
 │       ├── components/       # Shared UI components
 │       ├── pages/            # Page components
 │       └── api/              # API client
-├── host-agent/               # Host agent for evidence collection
+├── host_agent/               # Host agent for evidence collection
 │   ├── agent.py              # Main agent loop
 │   ├── buffer.py             # Local evidence buffering
 │   ├── collectors/           # Evidence collection modules

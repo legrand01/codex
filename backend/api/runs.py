@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["runs"])
 
 
-
 # --- Request/Response Models ---
 
 
 class StartRunRequest(BaseModel):
     """Request model for starting a new DBA loop run."""
+
     goal: str = Field(..., min_length=1, description="High-level DBA goal")
     host_id: Optional[str] = Field(None, description="Target host UUID")
     max_iterations: int = Field(default=10, ge=1)
@@ -48,6 +48,7 @@ class StartRunRequest(BaseModel):
 
 class StartRunResponse(BaseModel):
     """Response model for starting a run."""
+
     run_id: str
     status: str
     goal: str
@@ -56,6 +57,7 @@ class StartRunResponse(BaseModel):
 
 class HaltRunResponse(BaseModel):
     """Response model for halting a run."""
+
     success: bool
     message: str
     status: str
@@ -64,6 +66,7 @@ class HaltRunResponse(BaseModel):
 
 class RunStatusResponse(BaseModel):
     """Response model for run status."""
+
     id: str
     goal: str
     status: str
@@ -79,9 +82,9 @@ class RunStatusResponse(BaseModel):
 
 class RunListResponse(BaseModel):
     """Response model for listing active runs."""
+
     runs: List[RunSummary]
     total: int
-
 
 
 # --- Endpoints ---
@@ -122,7 +125,7 @@ async def start_run(request: StartRunRequest, db=Depends(get_db)) -> StartRunRes
         except Exception as e:
             logger.error(f"Background run failed: {e}")
 
-    task = asyncio.create_task(_run_in_background())
+    asyncio.create_task(_run_in_background())
 
     # Wait briefly for the run_id to be set
     await asyncio.sleep(0.1)
@@ -136,7 +139,6 @@ async def start_run(request: StartRunRequest, db=Depends(get_db)) -> StartRunRes
     )
 
 
-
 @router.post("/api/v1/runs/{run_id}/halt", response_model=HaltRunResponse)
 async def halt_run(run_id: UUID, db=Depends(get_db)) -> HaltRunResponse:
     """
@@ -147,7 +149,7 @@ async def halt_run(run_id: UUID, db=Depends(get_db)) -> HaltRunResponse:
 
     Requirements: 2.4, 2.6
     """
-    from backend.services.loop_worker import get_loop_worker, get_active_runs
+    from backend.services.loop_worker import get_active_runs, get_loop_worker
 
     active_runs = get_active_runs()
     run_id_str = str(run_id)
@@ -173,7 +175,6 @@ async def halt_run(run_id: UUID, db=Depends(get_db)) -> HaltRunResponse:
         status=result["status"],
         previous_step=result.get("previous_step"),
     )
-
 
 
 @router.get("/api/v1/runs/{run_id}", response_model=RunStatusResponse)
@@ -234,7 +235,6 @@ async def get_run_status(run_id: UUID, db=Depends(get_db)) -> RunStatusResponse:
     )
 
 
-
 @router.get("/api/v1/runs/", response_model=RunListResponse)
 async def list_active_runs(db=Depends(get_db)) -> RunListResponse:
     """
@@ -266,19 +266,22 @@ async def list_active_runs(db=Depends(get_db)) -> RunListResponse:
         if last_step and last_step.tzinfo is None:
             last_step = last_step.replace(tzinfo=timezone.utc)
 
-        runs.append(RunSummary(
-            id=row["id"],
-            goal=row["goal"],
-            current_step=WorkflowStep(row["current_step"]) if row["current_step"] else WorkflowStep.OBSERVE,
-            status=row["status"],
-            current_iteration=row["current_iteration"],
-            started_at=started_at,
-            last_step_transition_at=last_step if last_step else started_at,
-            elapsed_seconds=round(elapsed, 2),
-        ))
+        runs.append(
+            RunSummary(
+                id=row["id"],
+                goal=row["goal"],
+                current_step=WorkflowStep(row["current_step"])
+                if row["current_step"]
+                else WorkflowStep.OBSERVE,
+                status=row["status"],
+                current_iteration=row["current_iteration"],
+                started_at=started_at,
+                last_step_transition_at=last_step if last_step else started_at,
+                elapsed_seconds=round(elapsed, 2),
+            )
+        )
 
     return RunListResponse(runs=runs, total=len(runs))
-
 
 
 @router.websocket("/ws/runs/{run_id}")
@@ -297,6 +300,7 @@ async def ws_run_updates(websocket: WebSocket, run_id: str):
 
     try:
         from backend.db.redis_manager import get_redis_client
+
         redis_client = get_redis_client()
 
         if redis_client is None:
@@ -322,9 +326,7 @@ async def ws_run_updates(websocket: WebSocket, run_id: str):
                     await websocket.send_text(data)
                 else:
                     # Send a heartbeat ping
-                    await websocket.send_text(
-                        json.dumps({"type": "heartbeat", "run_id": run_id})
-                    )
+                    await websocket.send_text(json.dumps({"type": "heartbeat", "run_id": run_id}))
         except (WebSocketDisconnect, asyncio.CancelledError):
             pass
         finally:
@@ -360,19 +362,28 @@ async def _poll_run_updates(websocket: WebSocket, run_id: UUID):
                     )
                 if row and row["current_step"] != last_step:
                     last_step = row["current_step"]
-                    await websocket.send_text(json.dumps({
-                        "run_id": str(run_id),
-                        "step": row["current_step"],
-                        "status": row["status"],
-                        "timestamp": row["last_step_transition_at"].isoformat()
-                        if row["last_step_transition_at"] else None,
-                    }))
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "run_id": str(run_id),
+                                "step": row["current_step"],
+                                "status": row["status"],
+                                "timestamp": row["last_step_transition_at"].isoformat()
+                                if row["last_step_transition_at"]
+                                else None,
+                            }
+                        )
+                    )
                 if row and row["status"] not in ("running", "unresponsive"):
-                    await websocket.send_text(json.dumps({
-                        "run_id": str(run_id),
-                        "type": "completed",
-                        "status": row["status"],
-                    }))
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "run_id": str(run_id),
+                                "type": "completed",
+                                "status": row["status"],
+                            }
+                        )
+                    )
                     break
             await asyncio.sleep(2)
     except (WebSocketDisconnect, asyncio.CancelledError):

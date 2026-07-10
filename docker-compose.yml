@@ -52,7 +52,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
-    command: ["python", "host-agent/agent.py"]
+    command: ["python", "host_agent/agent.py"]
     profiles: ["host-agent"]
     environment:
       - CONTROL_PLANE_URL=http://app:8000

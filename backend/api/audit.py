@@ -13,10 +13,9 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from backend.dependencies import get_db
 from backend.models.audit import AuditEntry
 from backend.services.audit_logger import AuditLoggerError, get_audit_logger
 

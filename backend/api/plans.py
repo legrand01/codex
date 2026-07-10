@@ -13,7 +13,7 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -111,14 +111,18 @@ def _row_to_plan_detail(row) -> PlanDetail:
         proposed_changes=_parse_json_field(row["proposed_changes"]),
         evidence_references=_parse_json_field(row["evidence_references"]),
         risk_score=row["risk_score"] if row["risk_score"] is not None else 0,
-        confidence_score=float(row["confidence_score"]) if row["confidence_score"] is not None else 0.0,
+        confidence_score=float(row["confidence_score"])
+        if row["confidence_score"] is not None
+        else 0.0,
         uncertainty_explanation=row["uncertainty_explanation"],
         rollback_instructions=_parse_json_field(row["rollback_instructions"]),
         submission_time=row["submission_time"],
     )
 
 
-async def _forward_to_guardrail_engine(plan_id: UUID, host_id: UUID, proposed_changes: list, db) -> bool:
+async def _forward_to_guardrail_engine(
+    plan_id: UUID, host_id: UUID, proposed_changes: list, db
+) -> bool:
     """
     Forward an approved plan to the Guardrail Engine for dry-run execution.
 
@@ -382,9 +386,7 @@ async def approve_plan(
     message = "Plan approved and forwarded to Guardrail Engine for dry-run"
     if not forwarding_success:
         # Check current status from DB
-        updated_row = await db.fetchrow(
-            "SELECT status FROM plans WHERE id = $1", plan_id
-        )
+        updated_row = await db.fetchrow("SELECT status FROM plans WHERE id = $1", plan_id)
         status = updated_row["status"] if updated_row else PlanStatus.FORWARDING_FAILED.value
         message = "Plan approved but forwarding to Guardrail Engine failed after retries"
 
@@ -490,13 +492,15 @@ async def reject_plan(
 
             await redis_client.publish(
                 "plan_rejection",
-                json.dumps({
-                    "plan_id": str(plan_id),
-                    "run_id": str(row["run_id"]),
-                    "host_id": str(row["host_id"]),
-                    "rejection_reason": trimmed_reason,
-                    "rejected_by": request.rejected_by,
-                }),
+                json.dumps(
+                    {
+                        "plan_id": str(plan_id),
+                        "run_id": str(row["run_id"]),
+                        "host_id": str(row["host_id"]),
+                        "rejection_reason": trimmed_reason,
+                        "rejected_by": request.rejected_by,
+                    }
+                ),
             )
     except Exception as e:
         logger.warning(f"Failed to notify DBA_Loop_Worker of rejection: {e}")

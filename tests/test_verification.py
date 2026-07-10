@@ -11,7 +11,6 @@ Covers:
 Requirements: 12.1, 12.2, 12.3, 12.4, 12.5
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -26,7 +25,6 @@ from backend.services.verification import (
     compute_metric_delta,
     verify_and_decide,
 )
-
 
 # ============================================================
 # Tests for compute_metric_delta
@@ -191,17 +189,13 @@ class TestCollectVerificationEvidence:
     @pytest.mark.asyncio
     async def test_invalid_observation_window_too_high(self):
         """Window above 600s returns None."""
-        result = await collect_verification_evidence(
-            uuid4(), observation_window_seconds=601
-        )
+        result = await collect_verification_evidence(uuid4(), observation_window_seconds=601)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_collection_with_no_pool_returns_none(self):
         """If pool is None and get_pool() returns None, returns None."""
-        with patch(
-            "backend.services.verification.asyncio.sleep", new_callable=AsyncMock
-        ):
+        with patch("backend.services.verification.asyncio.sleep", new_callable=AsyncMock):
             with patch("backend.db.pool.get_pool", return_value=None):
                 result = await collect_verification_evidence(
                     uuid4(), observation_window_seconds=10, pool=None
@@ -225,9 +219,7 @@ class TestCollectVerificationEvidence:
         mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        with patch(
-            "backend.services.verification.asyncio.sleep", new_callable=AsyncMock
-        ):
+        with patch("backend.services.verification.asyncio.sleep", new_callable=AsyncMock):
             result = await collect_verification_evidence(
                 host_id, observation_window_seconds=10, pool=mock_pool
             )
@@ -250,9 +242,7 @@ class TestCollectVerificationEvidence:
         )
         mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        with patch(
-            "backend.services.verification.asyncio.sleep", new_callable=AsyncMock
-        ):
+        with patch("backend.services.verification.asyncio.sleep", new_callable=AsyncMock):
             result = await collect_verification_evidence(
                 host_id, observation_window_seconds=10, pool=mock_pool
             )
@@ -344,14 +334,17 @@ class TestVerifyAndDecide:
             "os_metrics": {"cpu_percent": 65.0},
         }
 
-        with patch(
-            "backend.services.verification.collect_verification_evidence",
-            new_callable=AsyncMock,
-            return_value=post_evidence,
-        ), patch(
-            "backend.services.verification._initiate_rollback",
-            new_callable=AsyncMock,
-        ) as mock_rollback:
+        with (
+            patch(
+                "backend.services.verification.collect_verification_evidence",
+                new_callable=AsyncMock,
+                return_value=post_evidence,
+            ),
+            patch(
+                "backend.services.verification._initiate_rollback",
+                new_callable=AsyncMock,
+            ) as mock_rollback,
+        ):
             result = await verify_and_decide(
                 run_id=run_id,
                 host_id=host_id,
@@ -380,14 +373,17 @@ class TestVerifyAndDecide:
 
         pre_evidence = {"os_metrics": {"cpu_percent": 50.0}}
 
-        with patch(
-            "backend.services.verification.collect_verification_evidence",
-            new_callable=AsyncMock,
-            return_value=None,  # Collection failed
-        ), patch(
-            "backend.services.verification._initiate_rollback",
-            new_callable=AsyncMock,
-        ) as mock_rollback:
+        with (
+            patch(
+                "backend.services.verification.collect_verification_evidence",
+                new_callable=AsyncMock,
+                return_value=None,  # Collection failed
+            ),
+            patch(
+                "backend.services.verification._initiate_rollback",
+                new_callable=AsyncMock,
+            ) as mock_rollback,
+        ):
             result = await verify_and_decide(
                 run_id=run_id,
                 host_id=host_id,
@@ -454,13 +450,16 @@ class TestVerifyAndDecide:
         # 4% change - within 10% but exceeds 2%
         post_evidence = {"os_metrics": {"cpu_percent": 52.0}}
 
-        with patch(
-            "backend.services.verification.collect_verification_evidence",
-            new_callable=AsyncMock,
-            return_value=post_evidence,
-        ), patch(
-            "backend.services.verification._initiate_rollback",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "backend.services.verification.collect_verification_evidence",
+                new_callable=AsyncMock,
+                return_value=post_evidence,
+            ),
+            patch(
+                "backend.services.verification._initiate_rollback",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await verify_and_decide(
                 run_id=run_id,
@@ -488,13 +487,16 @@ class TestVerifyAndDecide:
         # 50% drop in commits - exceeds 10% threshold
         post_evidence = {"pg_stat_database": {"xact_commit": 500}}
 
-        with patch(
-            "backend.services.verification.collect_verification_evidence",
-            new_callable=AsyncMock,
-            return_value=post_evidence,
-        ), patch(
-            "backend.services.verification._initiate_rollback",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "backend.services.verification.collect_verification_evidence",
+                new_callable=AsyncMock,
+                return_value=post_evidence,
+            ),
+            patch(
+                "backend.services.verification._initiate_rollback",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await verify_and_decide(
                 run_id=run_id,
@@ -590,13 +592,16 @@ class TestVerifyAndDecide:
             "pg_stat_database": {"xact_commit": 800},
         }
 
-        with patch(
-            "backend.services.verification.collect_verification_evidence",
-            new_callable=AsyncMock,
-            return_value=post_evidence,
-        ), patch(
-            "backend.services.verification._initiate_rollback",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "backend.services.verification.collect_verification_evidence",
+                new_callable=AsyncMock,
+                return_value=post_evidence,
+            ),
+            patch(
+                "backend.services.verification._initiate_rollback",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await verify_and_decide(
                 run_id=run_id,

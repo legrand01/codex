@@ -33,6 +33,7 @@ INTERVAL_RANGES = {
 
 class ConfigValidationError(ValueError):
     """Raised when agent configuration values are out of permitted range."""
+
     pass
 
 
@@ -115,8 +116,7 @@ class AgentConfig:
         min_val, max_val = INTERVAL_RANGES["pg_stats"]
         if not (min_val <= self.pg_stats_interval <= max_val):
             raise ConfigValidationError(
-                f"pg_stats_interval must be in [{min_val}, {max_val}], "
-                f"got {self.pg_stats_interval}"
+                f"pg_stats_interval must be in [{min_val}, {max_val}], got {self.pg_stats_interval}"
             )
 
         min_val, max_val = INTERVAL_RANGES["locks_replication"]

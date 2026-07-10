@@ -10,21 +10,17 @@ Tests cover:
 Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
 """
 
-import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.api.evidence import (
-    EVIDENCE_TYPE_CATEGORY_MAP,
     categorize_evidence_type,
     format_freshness_age,
 )
 from backend.main import app
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for format_freshness_age

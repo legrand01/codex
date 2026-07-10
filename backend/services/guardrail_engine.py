@@ -56,9 +56,12 @@ async def check_allowlist(
     Enforcement rules:
     - If the allowlist is empty, reject the entire plan (Requirement 8.1)
     - If any proposed setting is not in the allowlist, reject the entire plan (Requirement 8.2)
-    - Classify settings as reload-safe or restart-required based on parameter_context (Requirement 8.3)
-    - Permit restart-required changes only when host has restart_required_enabled = true (Requirement 8.4)
-    - Record violations in Audit_Log with disallowed setting names and host identifier (Requirement 8.2, 8.4)
+    - Classify settings as reload-safe or restart-required based on parameter_context
+      (Requirement 8.3)
+    - Permit restart-required changes only when host has restart_required_enabled = true
+      (Requirement 8.4)
+    - Record violations in Audit_Log with disallowed setting names and host identifier
+      (Requirement 8.2, 8.4)
 
     Args:
         proposed_changes: List of dicts, each with at minimum a "setting_name" key
@@ -228,7 +231,6 @@ async def check_restart_permission(
     return bool(host_row["restart_required_enabled"])
 
 
-
 def calculate_risk_score(
     proposed_changes: List[dict],
     host_role: str,
@@ -301,15 +303,17 @@ def calculate_risk_score(
         # Calculate per-setting risk contribution
         setting_risk = deviation_pct * host_role_multiplier * base_weight
 
-        breakdown.append({
-            "setting_name": setting_name,
-            "current_value": current_value,
-            "proposed_value": proposed_value,
-            "deviation_pct": round(deviation_pct, 2),
-            "host_role_multiplier": host_role_multiplier,
-            "base_weight": base_weight,
-            "risk_contribution": round(setting_risk, 2),
-        })
+        breakdown.append(
+            {
+                "setting_name": setting_name,
+                "current_value": current_value,
+                "proposed_value": proposed_value,
+                "deviation_pct": round(deviation_pct, 2),
+                "host_role_multiplier": host_role_multiplier,
+                "base_weight": base_weight,
+                "risk_contribution": round(setting_risk, 2),
+            }
+        )
 
         total_risk += setting_risk
 
@@ -436,8 +440,6 @@ async def check_risk_score(
         )
 
     return risk_result
-
-
 
 
 @dataclass
@@ -622,16 +624,12 @@ async def execute_dry_run(
 
                 # Check that the setting exists
                 if known_settings and setting_name not in known_settings:
-                    errors.append(
-                        f"Setting '{setting_name}' does not exist in host's pg_settings"
-                    )
+                    errors.append(f"Setting '{setting_name}' does not exist in host's pg_settings")
 
                 # Validate SQL statement if provided
                 sql = change.get("sql_statement", "")
                 if sql and not _validate_sql_statement(sql):
-                    errors.append(
-                        f"SQL statement for '{setting_name}' failed to parse: {sql}"
-                    )
+                    errors.append(f"SQL statement for '{setting_name}' failed to parse: {sql}")
 
         await asyncio.wait_for(_run_checks(), timeout=timeout)
 
@@ -748,9 +746,7 @@ def validate_rollback_plan(
         setting_name = change.get("setting_name", "")
 
         if setting_name not in rollback_map:
-            errors.append(
-                f"Missing rollback instruction for setting '{setting_name}'"
-            )
+            errors.append(f"Missing rollback instruction for setting '{setting_name}'")
             continue
 
         # Verify restore_value matches pre-snapshot value
@@ -759,9 +755,7 @@ def validate_rollback_plan(
         pre_value = pre_snapshot.get(setting_name)
 
         if pre_value is None:
-            errors.append(
-                f"Setting '{setting_name}' not found in pre-change snapshot"
-            )
+            errors.append(f"Setting '{setting_name}' not found in pre-change snapshot")
         elif str(restore_value) != str(pre_value):
             errors.append(
                 f"Rollback restore value for '{setting_name}' "
@@ -880,9 +874,7 @@ async def full_safety_check(
         }
 
         if blocked_by_risk:
-            error_msg = (
-                f"Risk score {risk_score} exceeds threshold {risk_threshold}"
-            )
+            error_msg = f"Risk score {risk_score} exceeds threshold {risk_threshold}"
             errors.append(error_msg)
             await audit_logger.log(
                 actor_type="system",

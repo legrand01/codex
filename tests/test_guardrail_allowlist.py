@@ -13,16 +13,14 @@ Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
 """
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from backend.services.guardrail_engine import (
-    AllowlistResult,
     check_allowlist,
     check_restart_permission,
 )
-
 
 # --- Fixtures and Helpers ---
 
@@ -255,7 +253,10 @@ async def test_multiple_violations_reported_correctly():
     host_id = make_host_id()
     proposed_changes = [
         {"setting_name": "max_connections", "proposed_value": "200"},  # Not in allowlist
-        {"setting_name": "shared_preload_libraries", "proposed_value": "pg_stat_statements"},  # restart, no permission
+        {
+            "setting_name": "shared_preload_libraries",
+            "proposed_value": "pg_stat_statements",
+        },  # restart, no permission
         {"setting_name": "unknown_setting", "proposed_value": "value"},  # Not in allowlist
     ]
 
