@@ -592,6 +592,149 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
 - [~] 21. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
+- [ ] 22. Persistent tuning-session product workflow
+
+  - [ ] 22.1 Replace active-only run listing with persistent session history
+    - Add paginated/filterable all-status runs API while retaining an active-only filter
+    - Include completion timestamp and freeze terminal-run elapsed duration
+    - Add indexes for host, status, objective, mode, and start/completion date filters
+    - Preserve direct detail access for completed, failed, halted, and timed-out sessions
+    - _Requirements: 16.1, 16.2, 16.6, 16.7_
+
+  - [ ] 22.2 Implement Start tuning flow
+    - Add primary Start tuning action from Fleet and Tuning pages
+    - Select host/database, objective, Workload_Fingerprint, mode, parameters, approval policy, measurement windows, and guardrails
+    - Run capability/preflight checks before enabling session creation
+    - _Requirements: 16.1, 17.1, 18.5, 18.6, 18.7_
+
+  - [ ] 22.3 Implement the session-centric React workspace
+    - Create `/tuning/:runId` with persistent session header
+    - Add Overview, Configuration, Workload, Evidence, Activity, and Report tabs
+    - Pass runId from route context to every child request; remove UUID entry forms from normal navigation
+    - Link session history, plans, evidence, events, configuration versions, rollback, and reports bidirectionally
+    - Keep Plans as a queue filter inside Tuning/Administration rather than a disconnected history page
+    - _Requirements: 16.3, 16.4, 16.5, 16.8_
+
+  - [ ]* 22.4 Test session persistence and context propagation
+    - Property 34: terminal sessions remain discoverable
+    - Property 35: every workspace child uses the route runId
+    - End-to-end test: start session, approve, complete, revisit from history, open all tabs without UUID entry
+    - _Requirements: 16.2, 16.3, 16.4, 16.8_
+
+- [ ] 23. Workload fingerprints and measured candidate optimization
+
+  - [ ] 23.1 Implement Workload_Fingerprint storage and APIs
+    - Capture normalized query ID, optional query text, AQR, calls, total duration, runtime coverage, and last seen
+    - Implement recommended fingerprint generation and named custom fingerprints
+    - Detect low coverage, unstable membership, and high measurement variance
+    - _Requirements: 17.2, 17.3, 17.4, 17.9_
+
+  - [ ] 23.2 Implement baseline measurement protocol
+    - Persist objective formula, fingerprint membership, warm-up window, measurement window, units, workload coverage, and safety metrics
+    - Add a root-cause gate for configuration, query/index, lock, vacuum/bloat, resource saturation, connection pressure, and insufficient evidence
+    - Route query/index findings to a separate non-executable advisory track instead of using parameter changes as a universal answer
+    - Reject or pause baseline when coverage or variance fails configured thresholds
+    - _Requirements: 17.5, 17.9, 17.10_
+
+  - [ ] 23.3 Implement bounded CandidateOptimizer
+    - Introduce deterministic bounded-search strategy behind CandidateOptimizer interface
+    - Generate candidates only within versioned per-setting domains and guardrail allowlists
+    - Apply, warm up, measure, score, and compare every candidate against baseline and best-so-far
+    - Keep only beneficial/safe candidates; otherwise restore best or exact baseline
+    - Persist all candidate measurements and decisions
+    - _Requirements: 17.6, 17.7, 17.8_
+
+  - [ ] 23.4 Implement supported parameter catalog and dispositions
+    - Version catalog by PostgreSQL major version and platform
+    - Add the 15 reload-only settings and four restart-enabled settings specified in Requirement 18
+    - Display current/source/context/pending restart, baseline, best, pending, and final disposition for every catalog entry
+    - _Requirements: 18.1, 18.2, 18.3, 18.4_
+
+  - [ ]* 23.5 Test candidate correctness
+    - Property 36: measurement comparability
+    - Property 37: keep only objective improvement within all guardrails
+    - Property 38: complete one-to-one final parameter dispositions
+    - Add noisy-workload, low-coverage, regression, and convergence integration cases
+    - _Requirements: 17.6, 17.7, 17.8, 17.9, 18.4_
+
+- [ ] 24. Pluggable configuration backends and managed conf.d ownership
+
+  - [ ] 24.1 Define ConfigurationBackend protocol and router
+    - Implement common preflight, snapshot, apply, rollback, and verification result models
+    - Select backend from explicit per-host enrollment and platform capability
+    - Record backend in sessions, plans, configuration versions, audit entries, and events
+    - _Requirements: 19.1, 19.10_
+
+  - [ ] 24.2 Retain and generalize AlterSystemBackend
+    - Preserve PostgreSQL 15+ parameter-scoped ALTER SYSTEM and pg_reload_conf path
+    - Verify source/provenance and exact snapshot restoration
+    - Support the complete reload-only catalog and staged restart parameters
+    - _Requirements: 18.1, 18.2, 19.2, 19.9_
+
+  - [ ] 24.3 Implement self-managed ManagedConfFileBackend in Host_Agent
+    - Enroll only verified self-managed hosts with configured managed path
+    - Verify config_file/include_dir ordering, permissions, ownership, disk space, and same-filesystem rename
+    - Detect higher-precedence command-line, postgres.auto.conf, later-include, database/user, and provider conflicts
+    - Render allowlisted settings to `99-dbtune-managed.conf`
+    - Atomic temp-write + fsync + pg_file_settings validation + rename + pg_reload_conf
+    - Verify effective value and sourcefile
+    - _Requirements: 19.3, 19.4, 19.5, 19.6_
+
+  - [ ] 24.4 Implement byte-exact managed-file rollback and recovery
+    - Persist checksum, exact prior bytes/absence, owner, mode, and target values before apply
+    - Restore previous bytes or remove file atomically on rollback/failure
+    - Reload and verify both value and provenance
+    - Reconcile interrupted apply operations from durable configuration-version state
+    - _Requirements: 19.7, 19.8, 19.9_
+
+  - [ ] 24.5 Add provider-managed configuration adapter interface
+    - Define staged apply/reboot/poll/verify contract for RDS/Aurora, Cloud SQL, Aiven, and future providers
+    - Do not emulate file access on managed services
+    - _Requirements: 19.1, 19.10_
+
+  - [ ]* 24.6 Test configuration ownership safety
+    - Property 39: managed-file atomicity
+    - Property 40: higher-precedence conflict blocks apply
+    - Property 41: byte-exact rollback and provenance restoration
+    - Real PostgreSQL tests for include_dir, postgres.auto.conf conflict, invalid pg_file_settings, reload failure, and restart-pending state
+    - _Requirements: 19.4, 19.5, 19.6, 19.7, 19.8, 19.9_
+
+- [ ] 25. Configuration history, agent capabilities, and coded events
+
+  - [ ] 25.1 Implement configuration version history
+    - Store active/superseded/rolled-back/failed versions with originating session, backend, values, source provenance, and verification
+    - Add compare, redacted download, and guarded re-apply APIs and UI
+    - _Requirements: 20.1, 20.2_
+
+  - [ ] 25.2 Implement Agent capability diagnostics and setup guide
+    - Report connectivity, system info/metrics, pg_stat_statements, query collection, read/write/reload/restart/provider capabilities independently
+    - Generate PostgreSQL-version, mode, and backend-specific least-privilege setup instructions
+    - _Requirements: 20.3, 20.4_
+
+  - [ ] 25.3 Implement agent lease and duplicate detection
+    - Add single-writer lease per host identity
+    - Emit duplicate/resolved event codes and block writes while lease ownership is ambiguous
+    - _Requirements: 20.5_
+
+  - [ ] 25.4 Implement structured operational event history
+    - Add event-code catalog and host_events persistence
+    - Add filters for time, severity, code, host, session, component, and text
+    - Link events to sessions and configuration versions
+    - Emit events for candidate, agent, configuration, approval, reload/restart, rollback, and report outcomes
+    - _Requirements: 20.6, 20.7_
+
+  - [ ]* 25.5 Test history, diagnostics, and event safety
+    - Property 42: duplicate agents exclude writes
+    - Test configuration compare/reapply approval path and redacted download
+    - Test event filters and deep links
+    - _Requirements: 20.2, 20.5, 20.6, 20.7_
+
+- [ ] 26. Productized tuning checkpoint
+  - Run unit, property, integration, real-target, frontend, and browser workflow tests
+  - Verify the DBTune-baseline flow from Start tuning through persistent final report
+  - Verify both AlterSystemBackend and ManagedConfFileBackend apply/rollback paths
+  - Confirm completed sessions remain visible and no normal workflow requires pasted UUIDs
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for faster MVP
@@ -635,7 +778,12 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     { "id": 24, "tasks": ["17.2", "17.3", "17.4", "17.5", "17.6"] },
     { "id": 25, "tasks": ["19.1", "19.2"] },
     { "id": 26, "tasks": ["19.3", "19.4"] },
-    { "id": 27, "tasks": ["20.1", "20.2", "20.3", "20.4"] }
+    { "id": 27, "tasks": ["20.1", "20.2", "20.3", "20.4"] },
+    { "id": 28, "tasks": ["22.1", "23.1", "24.1", "25.1"] },
+    { "id": 29, "tasks": ["22.2", "23.2", "24.2", "24.3", "25.2", "25.3"] },
+    { "id": 30, "tasks": ["22.3", "23.3", "23.4", "24.4", "24.5", "25.4"] },
+    { "id": 31, "tasks": ["22.4", "23.5", "24.6", "25.5"] },
+    { "id": 32, "tasks": ["26"] }
   ]
 }
 ```

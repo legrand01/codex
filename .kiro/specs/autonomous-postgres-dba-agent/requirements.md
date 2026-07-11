@@ -19,6 +19,11 @@ The Autonomous Postgres DBA Agent Platform enables database administrators to ru
 - **DBA_Report**: A final summary document produced at the end of a loop run, containing all decisions, evidence references, outcomes, and audit trail entries
 - **Demo_Mode**: A runtime configuration that seeds realistic PostgreSQL fleet data and enables full platform functionality without production database credentials
 - **Audit_Log**: A persistent, append-only record of every decision, command, approval, and outcome within the platform
+- **Tuning_Session**: A persistent, user-visible optimization run that owns its baseline, workload objective, candidate configurations, Plans, Evidence, approvals, verification results, configuration versions, and final report
+- **Workload_Fingerprint**: A named, stable set of normalized PostgreSQL statements used as a repeatable tuning objective, with coverage measured from average query runtime, call count, and total execution time
+- **Configuration_Backend**: A target-specific adapter that applies and rolls back settings using parameter-scoped ALTER SYSTEM, a DBTune-owned configuration file, or a managed-cloud provider API
+- **Managed_Configuration_File**: A DBTune-owned include file, normally `conf.d/99-dbtune-managed.conf`, whose exact contents and provenance are versioned for atomic apply and rollback
+- **Tuning_Candidate**: One bounded configuration evaluated against the same Tuning_Session baseline and objective, with warm-up, measurement, score, guardrail result, and keep/rollback decision
 
 ## Requirements
 
@@ -223,3 +228,80 @@ The Autonomous Postgres DBA Agent Platform enables database administrators to ru
 5. WHEN the automated test suite is executed, THE Control_Plane SHALL run tests covering guardrail enforcement, loop execution, evidence collection, and plan generation workflows, and the suite SHALL exit with a zero exit code when all tests pass
 6. WHEN the deployment script is executed, THE Control_Plane SHALL be accessible via a web browser at a configurable host and port, returning a valid HTTP response within 30 seconds of script completion
 7. IF the container build fails or any required service fails to start within the specified timeout, THEN THE Control_Plane SHALL exit with a non-zero exit code and output a message indicating which component failed to initialize
+
+### Requirement 16: Persistent Tuning Session Workspace
+
+**User Story:** As a DBA, I want every tuning session and all of its related information in one persistent workspace, so that I can start, monitor, review, and revisit tuning without copying identifiers between pages.
+
+#### Acceptance Criteria
+
+1. THE Control_Plane SHALL provide a Tuning landing page containing a primary `Start tuning` action and a persistent history of Tuning_Sessions in every status, including queued, running, waiting approval, completed, failed, manually halted, unresponsive, and timed out
+2. WHEN a Tuning_Session completes, fails, or is halted, THE Control_Plane SHALL retain it in session history and SHALL NOT remove it from the default Runs or Tuning view merely because it is no longer active
+3. WHEN the DBA selects a Tuning_Session, THE Control_Plane SHALL navigate to a stable route containing the run identifier and SHALL automatically scope Overview, Plans, Evidence, Configuration, Activity, Rollback, and Report views to that selected run
+4. THE Tuning_Session workspace SHALL present Plans, Evidence, Configuration changes, Activity, and Report as tabs or sections on the same page and SHALL NOT require the DBA to paste a run or plan UUID to move between them
+5. THE Tuning_Session header SHALL remain visible across its tabs and display host, database, objective, tuning mode, session status, current workflow step, baseline score, best score, start time, completion time, and safe available actions
+6. WHEN a completed Tuning_Session is displayed, elapsed duration SHALL be calculated using its completion timestamp and SHALL remain stable instead of continuing to increase
+7. THE Control_Plane SHALL allow session history filtering by host, database, status, tuning target, mode, and date range, and SHALL provide direct links from every history row to the session workspace
+8. THE Control_Plane SHALL preserve the selected Tuning_Session while the DBA switches among its tabs, refreshes the page, or follows an Evidence or Plan reference
+
+### Requirement 17: Workload Objectives and Candidate Optimization
+
+**User Story:** As a DBA, I want tuning to optimize a measured workload objective rather than make one-shot guesses from pg_settings, so that each retained configuration is proven against the database's real workload.
+
+#### Acceptance Criteria
+
+1. WHEN the DBA starts tuning, THE Control_Plane SHALL require selection of a target host/database, a reload-only or restart-enabled mode, and one objective: recommended Workload_Fingerprint, custom Workload_Fingerprint, system-wide average query runtime, transactions per second, or a configured composite objective
+2. THE Host_Agent SHALL collect normalized query identifiers and, when explicitly enabled, query text together with calls, average query runtime, total execution time, runtime coverage, and last-seen timestamp from pg_stat_statements
+3. THE Control_Plane SHALL recommend Workload_Fingerprint members using both average query runtime and call count, SHALL display runtime coverage, and SHALL warn when visible queries represent insufficient or inconsistent workload coverage
+4. THE DBA SHALL be able to create a named custom Workload_Fingerprint by selecting one or more normalized statements, and the platform SHALL preserve membership and selection criteria for later Tuning_Sessions
+5. BEFORE evaluating a Tuning_Candidate, THE DBA_Loop_Worker SHALL capture a stable baseline observation window for the selected objective and the applicable safety metrics
+6. THE optimization loop SHALL evaluate multiple bounded Tuning_Candidates against the same baseline, workload definition, warm-up period, measurement window, and scoring method rather than treating a proposed value as beneficial before measurement
+7. AFTER each candidate measurement, THE DBA_Loop_Worker SHALL record the candidate values, objective score, baseline delta, best-so-far delta, safety-metric deltas, workload coverage, and statistical confidence or noise warning
+8. THE DBA_Loop_Worker SHALL keep a candidate only when it improves the selected objective without violating configured safety guardrails; otherwise it SHALL restore the best verified configuration or exact baseline
+9. IF the workload changes materially, coverage falls below threshold, or measurement variance exceeds the configured noise limit, THEN THE DBA_Loop_Worker SHALL pause candidate evaluation and require a fresh baseline or DBA decision
+10. BEFORE proposing configuration changes, THE DBA_Loop_Worker SHALL classify whether the dominant evidence indicates configuration, query plan or missing index, lock contention, vacuum/bloat, storage/CPU saturation, connection pressure, or insufficient evidence; when configuration is not a plausible dominant lever, it SHALL avoid blind parameter changes and SHALL produce a separate advisory diagnosis whose query/index actions remain non-executable until governed by a future allowlisted workflow
+
+### Requirement 18: PostgreSQL Parameter Coverage and Tuning Modes
+
+**User Story:** As a DBA, I want to see every supported PostgreSQL tuning parameter and its disposition, so that I know what was changed, retained, blocked, or not evaluated.
+
+#### Acceptance Criteria
+
+1. THE reload-only mode SHALL support independent allowlisting of: work_mem, random_page_cost, seq_page_cost, checkpoint_completion_target, effective_io_concurrency, max_parallel_workers_per_gather, max_parallel_workers, max_wal_size, min_wal_size, bgwriter_lru_maxpages, bgwriter_delay, effective_cache_size, maintenance_work_mem, default_statistics_target, and max_parallel_maintenance_workers
+2. THE restart-enabled mode MAY additionally support shared_buffers, max_worker_processes, wal_buffers, and huge_pages, and SHALL clearly identify that these values cannot become active through pg_reload_conf() alone
+3. THE Control_Plane SHALL display every supported parameter for the selected PostgreSQL version with current value, unit, source, source file or provider, context, pending-restart state, allowlist state, baseline value, best verified value, pending candidate value, and final disposition
+4. THE final disposition for each supported parameter SHALL be exactly one of: changed and verified, retained at baseline, blocked by policy, restart required, unsupported on target, not applicable to objective, or inconclusive due to insufficient evidence
+5. THE DBA SHALL be able to include or exclude individual supported parameters before a Tuning_Session begins, subject to organization and host guardrails
+6. THE Control_Plane SHALL provide a configurable human-in-the-loop mode that requires explicit approval before every candidate apply, while retaining mandatory final approval and production write interlocks
+7. THE Control_Plane SHALL expose independently configurable regression guardrails for average query runtime, transactions per second, Workload_Fingerprint performance, locks, replication, WAL/checkpoints, CPU, memory, and I/O
+
+### Requirement 19: Pluggable Configuration Apply and Rollback
+
+**User Story:** As a DBA, I want DBTune changes isolated from my hand-managed configuration, so that ownership, verification, and rollback are explicit across self-managed and managed PostgreSQL platforms.
+
+#### Acceptance Criteria
+
+1. THE platform SHALL implement a Configuration_Backend interface with at least `alter_system`, `managed_conf_file`, and provider-managed adapters, and SHALL record the chosen backend with each host and Tuning_Session
+2. THE `alter_system` backend SHALL use parameter-scoped ALTER SYSTEM privileges where supported, SHALL verify values after pg_reload_conf(), and SHALL preserve existing postgres.auto.conf provenance during rollback
+3. THE `managed_conf_file` backend SHALL be available only for explicitly enrolled self-managed hosts whose Host_Agent has verified filesystem access and a postgresql.conf include or include_dir path that loads the DBTune-owned file
+4. BEFORE using `managed_conf_file`, THE Host_Agent SHALL verify include ordering, directory and file ownership, write permissions, configuration-file location, absence of command-line overrides, and absence of conflicting postgres.auto.conf entries for every managed parameter
+5. THE DBTune-owned file SHALL use a deterministic late-loading name such as `conf.d/99-dbtune-managed.conf`; the platform SHALL fail closed when another later include, postgres.auto.conf entry, command-line setting, database/user setting, or provider setting would override a proposed value
+6. APPLY through `managed_conf_file` SHALL render only allowlisted settings, write a temporary file in the same filesystem, fsync it, validate the resulting configuration through pg_file_settings, atomically rename it, call pg_reload_conf(), and verify both effective value and pg_settings sourcefile
+7. THE platform SHALL store a checksum and exact previous bytes of the DBTune-owned file before every apply; rollback SHALL atomically restore those bytes or remove the file when it did not previously exist, reload configuration, and verify both value and provenance
+8. IF pg_file_settings reports a syntax, name, value, or precedence error, pg_reload_conf() returns false, or effective values fail to converge, THEN the Configuration_Backend SHALL restore the previous version immediately and mark the operation failed
+9. RESTART-context settings SHALL be staged separately, displayed as pending restart, and SHALL never be reported as active until a controlled restart and post-restart verification succeed
+10. Managed-cloud targets without filesystem access SHALL use the provider adapter and SHALL NOT require or simulate conf.d file ownership
+
+### Requirement 20: Configuration History, Agent Diagnostics, and Events
+
+**User Story:** As a DBA, I want configuration versions, agent capability health, and operational events visible beside tuning sessions, so that I can understand what is active and why an action is blocked.
+
+#### Acceptance Criteria
+
+1. THE Control_Plane SHALL provide configuration history per host/database, showing each version's identifier, active state, creation and apply timestamps, originating Tuning_Session, backend, parameter values, and verification outcome
+2. THE DBA SHALL be able to compare any two configuration versions, download a redacted representation, and request application of an eligible prior version through the same approval and guardrail workflow
+3. THE Control_Plane SHALL display Agent capability status separately for connectivity, system information, system metrics, pg_stat_statements, query-text collection, configuration read access, configuration write access, reload permission, restart capability, and provider API capability
+4. THE Agent setup view SHALL generate version- and mode-specific least-privilege instructions, including pg_monitor, pg_stat_statements prerequisites, per-parameter ALTER SYSTEM grants, pg_reload_conf permission, or managed-file ownership requirements as applicable
+5. THE platform SHALL detect simultaneous active Host_Agents for the same host identity, emit a coded event, block ambiguous write execution, and identify when the duplicate-agent condition is resolved
+6. THE Control_Plane SHALL provide filterable Event history by time range, severity, event code, host, session, component, and free-text search, with direct links from events to the affected Tuning_Session or configuration version
+7. Agent failures, candidate decisions, approvals, applies, reloads, restarts, rollbacks, precedence conflicts, workload coverage warnings, and report generation outcomes SHALL emit structured event codes in addition to append-only Audit_Log entries

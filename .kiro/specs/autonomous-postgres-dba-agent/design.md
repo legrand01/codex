@@ -22,6 +22,45 @@ The system consists of five primary components:
 | AI Integration | LLM via OpenAI-compatible API | Structured output for plan generation, evidence grounding through prompt engineering |
 | Containerization | Docker + docker-compose | Single-command local dev, consistent environments, production-ready |
 | Testing | pytest + Hypothesis (property-based) | Comprehensive testing with property-based validation of guardrail logic |
+| Product Information Architecture | Session-centric tuning workspace | Runs, Plans, Evidence, Configuration, Activity, Rollback, and Report share one persistent run context instead of separate UUID-driven queues |
+| Optimization Method | Baseline-and-candidate search | Candidate configurations are measured against a stable Workload_Fingerprint, AQR, TPS, or composite objective; no setting is called beneficial before verification |
+| Configuration Apply | Pluggable Configuration_Backend | Parameter-scoped ALTER SYSTEM remains the portable least-privilege default; an atomic DBTune-owned conf.d file is preferred on explicitly enrolled self-managed hosts; provider APIs handle managed services |
+
+### DBTune Baseline Research
+
+The July 12, 2026 baseline was verified against the authenticated DBTune product
+and its public documentation. Accepted live captures are stored in
+`docs/postgres-dba-demo-assets/dbtune-live-2026-07-12/`.
+
+The baseline establishes these product behaviors:
+
+- a per-database workspace with Dashboard, Tuning, Fingerprints,
+  Configuration history, Event logs, and Agent tabs;
+- a tuning-session selector and performance charts with time windows;
+- recommended or custom Workload_Fingerprints based on query AQR, calls, total
+  duration, runtime coverage, and last-seen time;
+- workload-fingerprint and system-wide tuning modes;
+- optional human-in-the-loop approval, reload-only and restart-enabled modes,
+  explicit parameter selection, and separate AQR/TPS/fingerprint guardrails;
+- configuration history with compare, download, and guarded apply actions;
+- coded, filterable event logs and agent capability/setup diagnostics.
+
+DBTune's Community PostgreSQL integration uses ALTER SYSTEM. This design adds a
+managed-file backend as a deliberate self-managed-host option, not as a claim
+that the reference product edits conf.d or that file access is portable to
+managed PostgreSQL services.
+
+Primary references:
+
+- https://docs.dbtune.com/overview/
+- https://docs.dbtune.com/server-parameter-tuning/
+- https://docs.dbtune.com/tuning-targets/
+- https://docs.dbtune.com/tuning-modes/
+- https://docs.dbtune.com/Human-in-the-loop/
+- https://docs.dbtune.com/postgresql/
+- https://www.postgresql.org/docs/current/sql-altersystem.html
+- https://www.postgresql.org/docs/current/config-setting.html
+- https://www.postgresql.org/docs/current/view-pg-file-settings.html
 
 ## Architecture
 
@@ -40,6 +79,8 @@ graph TB
         AIP[AI Planning Module]
         LW[DBA Loop Worker]
         AL[Audit Logger]
+        OE[Candidate Optimizer]
+        CB[Configuration Backend Router]
     end
 
     subgraph "Data Layer"
@@ -65,6 +106,9 @@ graph TB
     LW --> GE
     LW --> AIP
     LW --> AL
+    LW --> OE
+    OE --> GE
+    GE --> CB
     GE --> AL
     AIP --> AL
     
@@ -78,6 +122,9 @@ graph TB
     HA1 --> PG1
     HA2 --> PG2
     HA3 --> PG3
+    CB --> HA1
+    CB --> HA2
+    CB --> HA3
 ```
 
 ### Component Communication
@@ -147,6 +194,11 @@ sequenceDiagram
 /api/v1/rollback/       # Rollback initiation and monitoring
 /api/v1/audit/          # Audit log querying
 /api/v1/reports/        # DBA report retrieval and search
+/api/v1/sessions/       # Persistent tuning-session history and workspace summaries
+/api/v1/fingerprints/   # Recommended/custom workload fingerprints
+/api/v1/configurations/ # Configuration versions, compare, download, guarded apply
+/api/v1/events/         # Filterable operational event history
+/api/v1/agents/         # Agent capabilities, duplicate detection, setup diagnostics
 /api/v1/guardrails/     # Guardrail configuration (allowlists, thresholds)
 /api/v1/demo/           # Demo mode management
 /ws/runs/{run_id}       # WebSocket for real-time run updates
@@ -167,6 +219,30 @@ class RunsAPI:
     async def halt_run(run_id: str) -> HaltResponse
     async def get_run_status(run_id: str) -> RunStatus
     async def list_active_runs() -> List[RunSummary]
+    async def list_runs(filters: RunFilters, page: int, page_size: int) -> PaginatedRuns
+    async def get_workspace(run_id: str) -> TuningSessionWorkspace
+
+class TuningSessionsAPI:
+    async def start_session(request: StartTuningSession) -> TuningSession
+    async def list_sessions(filters: SessionFilters) -> PaginatedSessions
+    async def get_session(run_id: str) -> TuningSessionWorkspace
+
+class FingerprintsAPI:
+    async def recommend(host_id: str, window: TimeRange) -> FingerprintRecommendation
+    async def create(request: CreateFingerprint) -> WorkloadFingerprint
+    async def list(host_id: str) -> List[WorkloadFingerprint]
+
+class ConfigurationHistoryAPI:
+    async def list_versions(host_id: str) -> List[ConfigurationVersion]
+    async def compare(left_id: str, right_id: str) -> ConfigurationDiff
+    async def request_apply(version_id: str) -> Plan
+
+class EventsAPI:
+    async def list_events(filters: EventFilters) -> PaginatedEvents
+
+class AgentsAPI:
+    async def get_capabilities(host_id: str) -> AgentCapabilities
+    async def get_setup_instructions(host_id: str, mode: str, backend: str) -> SetupGuide
 
 class PlansAPI:
     async def list_pending_plans(page: int, page_size: int) -> PaginatedPlans
@@ -207,6 +283,11 @@ class HostAgent:
     async def report_heartbeat() -> None
     async def buffer_evidence(snapshot: EvidenceSnapshot) -> None
     async def flush_buffer() -> None
+    async def report_capabilities() -> AgentCapabilities
+    async def inspect_configuration_precedence(settings: List[str]) -> PrecedenceReport
+    async def validate_managed_configuration(rendered: bytes) -> FileValidationResult
+    async def atomic_write_managed_configuration(rendered: bytes) -> ManagedFileVersion
+    async def restore_managed_configuration(version: ManagedFileVersion) -> ApplyResult
 ```
 
 **Communication Protocol**: HTTP POST to Control Plane API with retry and local buffering (max 512 MB).
@@ -305,6 +386,169 @@ class AuditLogger:
     ]
 ```
 
+### 7. Tuning Session Workspace
+
+**Responsibilities**: Persistent session navigation, run history, unified run
+context, start-tuning flow, and safe action discovery.
+
+```text
+Primary navigation
+├── Fleet
+├── Tuning
+│   ├── Start tuning
+│   ├── Session history (all statuses)
+│   └── /tuning/{run_id}
+│       ├── Overview
+│       ├── Configuration
+│       ├── Workload
+│       ├── Evidence
+│       ├── Activity
+│       └── Report
+├── Reports
+└── Administration
+    ├── Guardrails
+    ├── Agent
+    └── Events
+```
+
+The workspace owns the selected `run_id`; child views receive it through the
+route and never ask the DBA to paste it. A persistent header exposes host,
+database, objective, mode, status, workflow step, baseline, best score,
+current candidate, start/completion times, and eligible actions. Completed and
+failed sessions remain in history. Active state is a filter, not a retention
+policy.
+
+### 8. Workload Fingerprint and Candidate Optimizer
+
+**Responsibilities**: Define a stable objective, capture a baseline, generate
+bounded candidates, measure them comparably, and retain only verified gains.
+
+```python
+class CandidateOptimizer:
+    async def capture_baseline(session: TuningSession) -> BaselineMeasurement
+    async def propose_candidate(
+        session: TuningSession,
+        history: List[CandidateMeasurement],
+    ) -> TuningCandidate
+    async def measure_candidate(candidate_id: UUID) -> CandidateMeasurement
+    async def decide(candidate_id: UUID) -> CandidateDecision
+    async def restore_best_or_baseline(session_id: UUID) -> ApplyResult
+```
+
+Candidate sequence:
+
+```mermaid
+sequenceDiagram
+    participant DBA
+    participant CP as Control Plane
+    participant OP as Candidate Optimizer
+    participant GE as Guardrails
+    participant CB as Configuration Backend
+    participant HA as Host Agent
+
+    DBA->>CP: Start tuning(host, objective, mode, parameters)
+    CP->>HA: Capture workload and safety baseline
+    HA-->>OP: Stable baseline + coverage/noise report
+    loop Until budget, convergence, or guardrail stop
+        OP->>GE: Proposed bounded candidate
+        GE-->>DBA: Approval when policy requires
+        GE->>CB: Apply candidate
+        CB-->>OP: Verified value and provenance
+        OP->>HA: Warm up and measure same objective
+        HA-->>OP: Candidate score + safety metrics
+        OP->>OP: Compare baseline and best-so-far
+        alt Candidate beneficial and safe
+            OP->>CP: Record new best
+        else Regression, noise, or coverage loss
+            OP->>CB: Restore best or baseline
+        end
+    end
+    OP->>CP: Final parameter dispositions and report
+```
+
+The initial optimizer may use deterministic bounded search. Bayesian or
+reinforcement-learning strategies can be introduced later behind the same
+interface. The correctness boundary is the repeatable measurement protocol,
+not the candidate-generation algorithm.
+
+Before candidate generation, a root-cause gate classifies configuration,
+query-plan/index, lock, vacuum/bloat, storage/CPU, connection-pressure, and
+insufficient-evidence signals. Configuration search proceeds only when a
+configuration lever is plausible. Query and index findings are presented as a
+separate advisory track and remain non-executable in the current P0 boundary.
+
+### 9. Configuration Backend Router
+
+```python
+class ConfigurationBackend(Protocol):
+    async def preflight(self, host_id: UUID, settings: List[str]) -> BackendPreflight
+    async def snapshot(self, host_id: UUID, settings: List[str]) -> ConfigurationSnapshot
+    async def apply(self, host_id: UUID, changes: List[SettingChange]) -> ApplyResult
+    async def rollback(self, host_id: UUID, snapshot: ConfigurationSnapshot) -> ApplyResult
+
+class AlterSystemBackend(ConfigurationBackend): ...
+class ManagedConfFileBackend(ConfigurationBackend): ...
+class ProviderConfigurationBackend(ConfigurationBackend): ...
+```
+
+#### Backend selection
+
+| Target | Preferred backend | Reason |
+|---|---|---|
+| Self-managed VM/bare metal with enrolled file access | `managed_conf_file` | Clear DBTune ownership and byte-exact version/rollback |
+| Self-managed PostgreSQL without file access | `alter_system` | Portable SQL path with PostgreSQL 15+ parameter-scoped privileges |
+| Managed cloud PostgreSQL | provider adapter | Provider owns parameter groups/flags and filesystem is unavailable |
+
+#### Managed file apply protocol
+
+1. Verify `config_file`, include/include_dir location and ordering, same-device
+   atomic rename support, ownership, permissions, and available disk space.
+2. Query `pg_settings` and `pg_file_settings` for source, sourcefile, context,
+   pending_restart, duplicate definitions, and parse errors.
+3. Fail closed if command-line options, `postgresql.auto.conf`, later include
+   files, database/user settings, or provider settings override a managed key.
+4. Capture the exact previous bytes, mode, owner, checksum, and effective
+   values as the rollback snapshot.
+5. Render only allowlisted settings to `99-dbtune-managed.conf.tmp`, fsync the
+   file and directory, validate with `pg_file_settings`, then atomically rename.
+6. Call `pg_reload_conf()` for reload-context settings and verify effective
+   value, `source = 'configuration file'`, and the expected `sourcefile`.
+7. On any failure, atomically restore the previous file bytes or absence,
+   reload, verify value and provenance, and emit a coded event.
+8. Stage postmaster-context settings as pending restart; verify them only after
+   a controlled restart.
+
+`postgresql.auto.conf` is loaded after `postgresql.conf` and its includes, so a
+DBTune-managed conf.d file cannot safely control a parameter that still has an
+ALTER SYSTEM entry. The backend preflight therefore rejects such conflicts; it
+does not silently reset configuration owned by another operator.
+
+### 10. Supported Parameter Catalog
+
+Reload-only catalog:
+
+```text
+work_mem                         random_page_cost
+seq_page_cost                    checkpoint_completion_target
+effective_io_concurrency         max_parallel_workers_per_gather
+max_parallel_workers             max_wal_size
+min_wal_size                     bgwriter_lru_maxpages
+bgwriter_delay                   effective_cache_size
+maintenance_work_mem             default_statistics_target
+max_parallel_maintenance_workers
+```
+
+Restart-enabled additions:
+
+```text
+shared_buffers   max_worker_processes   wal_buffers   huge_pages
+```
+
+The catalog is versioned by PostgreSQL major version and target platform. Every
+final report includes all catalog entries with one disposition: changed and
+verified, retained, blocked, restart required, unsupported, not applicable, or
+inconclusive.
+
 ## Data Models
 
 ### Core Database Schema
@@ -320,6 +564,9 @@ CREATE TABLE hosts (
     connection_status VARCHAR(20) DEFAULT 'disconnected' CHECK (connection_status IN ('connected', 'degraded', 'disconnected')),
     last_heartbeat TIMESTAMPTZ,
     restart_required_enabled BOOLEAN DEFAULT FALSE,
+    configuration_backend VARCHAR(30) DEFAULT 'alter_system' CHECK (configuration_backend IN ('alter_system', 'managed_conf_file', 'provider')),
+    managed_conf_path TEXT,
+    managed_conf_enrolled BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -329,6 +576,13 @@ CREATE TABLE loop_runs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     host_id UUID REFERENCES hosts(id),
     goal TEXT NOT NULL,
+    database_name VARCHAR(255),
+    tuning_target VARCHAR(30) CHECK (tuning_target IN ('fingerprint', 'aqr', 'tps', 'composite')),
+    tuning_mode VARCHAR(30) DEFAULT 'reload_only' CHECK (tuning_mode IN ('reload_only', 'restart_enabled')),
+    fingerprint_id UUID,
+    configuration_backend VARCHAR(30),
+    baseline_measurement JSONB,
+    best_measurement JSONB,
     status VARCHAR(30) DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'manually_halted', 'unresponsive', 'timed_out')),
     current_step VARCHAR(30) CHECK (current_step IN ('observe', 'snapshot', 'diagnose', 'propose_plan', 'safety_check', 'approval_gate', 'dry_run', 'apply', 'verify', 'measure', 'keep_rollback', 'report')),
     current_iteration INTEGER DEFAULT 1,
@@ -385,6 +639,73 @@ CREATE TABLE plans (
 CREATE INDEX idx_plans_status ON plans(status);
 CREATE INDEX idx_plans_run ON plans(run_id);
 CREATE INDEX idx_plans_submission ON plans(submission_time);
+
+-- Workload Fingerprints
+CREATE TABLE workload_fingerprints (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    host_id UUID REFERENCES hosts(id),
+    database_name VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    member_query_ids JSONB NOT NULL,
+    selection_window JSONB,
+    runtime_coverage NUMERIC(6,3),
+    created_by VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(host_id, database_name, name)
+);
+
+-- Candidate configurations measured within a tuning session
+CREATE TABLE tuning_candidates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id UUID REFERENCES loop_runs(id),
+    iteration INTEGER NOT NULL,
+    parameter_values JSONB NOT NULL,
+    baseline_score NUMERIC,
+    objective_score NUMERIC,
+    best_score_before NUMERIC,
+    safety_deltas JSONB NOT NULL DEFAULT '{}'::jsonb,
+    workload_coverage NUMERIC(6,3),
+    confidence_score NUMERIC(4,3),
+    decision VARCHAR(30) CHECK (decision IN ('pending', 'kept', 'rejected', 'rolled_back', 'inconclusive')),
+    measured_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(run_id, iteration)
+);
+
+-- Byte- and provenance-aware target configuration versions
+CREATE TABLE configuration_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    host_id UUID REFERENCES hosts(id),
+    run_id UUID REFERENCES loop_runs(id),
+    backend VARCHAR(30) NOT NULL,
+    status VARCHAR(30) NOT NULL CHECK (status IN ('staged', 'active', 'superseded', 'rolled_back', 'failed')),
+    parameter_values JSONB NOT NULL,
+    source_provenance JSONB NOT NULL,
+    managed_file_checksum VARCHAR(128),
+    managed_file_previous_bytes BYTEA,
+    applied_at TIMESTAMPTZ,
+    verified_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Filterable operational events; audit_log remains the immutable compliance log
+CREATE TABLE host_events (
+    id BIGSERIAL PRIMARY KEY,
+    host_id UUID REFERENCES hosts(id),
+    run_id UUID REFERENCES loop_runs(id),
+    configuration_version_id UUID REFERENCES configuration_versions(id),
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    severity VARCHAR(20) NOT NULL CHECK (severity IN ('info', 'warning', 'error', 'critical')),
+    component VARCHAR(50) NOT NULL,
+    event_code VARCHAR(30) NOT NULL,
+    message TEXT NOT NULL,
+    details JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX idx_candidates_run ON tuning_candidates(run_id, iteration);
+CREATE INDEX idx_config_versions_host ON configuration_versions(host_id, created_at DESC);
+CREATE INDEX idx_host_events_filters ON host_events(host_id, occurred_at DESC, severity, event_code);
 
 -- Guardrail Allowlist
 CREATE TABLE guardrail_allowlist (
@@ -770,6 +1091,63 @@ class AllowlistEntry(BaseModel):
 
 *For any* connection attempt to a database host while Demo_Mode is active, the Control Plane SHALL reject the connection if the target address is not designated as synthetic. Zero network requests SHALL be transmitted to non-synthetic host addresses during Demo_Mode.
 
+### Property 34: Completed Session Persistence
+
+*For any* Tuning_Session status transition from an active to a terminal state,
+the session SHALL remain discoverable through the default history query and its
+workspace route SHALL resolve to the same run, Plans, Evidence, configuration
+versions, events, and report.
+
+### Property 35: Session Context Propagation
+
+*For any* selected Tuning_Session and workspace tab, every child API request
+that requires run scope SHALL use the selected route run identifier. No child
+view SHALL require a separately entered identifier.
+
+### Property 36: Candidate Measurement Comparability
+
+*For any* two Tuning_Candidates compared in one session, workload membership,
+objective formula, warm-up duration, measurement duration, and metric units
+SHALL match; otherwise the comparison SHALL be marked inconclusive.
+
+### Property 37: Candidate Keep Decision
+
+*For any* measured candidate, a keep decision SHALL occur only when objective
+improvement meets the configured minimum and every safety metric remains within
+its guardrail. Every other completed measurement SHALL restore best-so-far or
+baseline.
+
+### Property 38: Parameter Catalog Disposition Completeness
+
+*For any* completed session, every parameter supported for the target version,
+platform, and selected mode SHALL appear exactly once in the final disposition
+set.
+
+### Property 39: Managed Configuration Atomicity
+
+*For any* managed-file apply observed by PostgreSQL, the DBTune-owned file SHALL
+contain either the complete previous version or the complete proposed version;
+partial/truncated content SHALL never be visible at the managed path.
+
+### Property 40: Configuration Precedence Safety
+
+*For any* proposed managed-file setting, execution SHALL be blocked when a
+higher-precedence command-line, postgres.auto.conf, later include, database,
+user, or provider source controls that setting.
+
+### Property 41: Byte-Exact Managed File Rollback
+
+*For any* successful managed-file rollback, the resulting bytes and checksum
+SHALL equal the captured pre-apply version, or the file SHALL be absent if it
+was absent in the snapshot, and effective values and sourcefile SHALL match the
+snapshot.
+
+### Property 42: Duplicate Agent Write Exclusion
+
+*For any* host identity with more than one active Host_Agent lease, all target
+write operations SHALL be blocked until exactly one lease remains active and a
+resolution event has been recorded.
+
 **Validates: Requirements 14.4**
 
 ## Error Handling
@@ -788,6 +1166,11 @@ class AllowlistEntry(BaseModel):
 | Secret Redaction Failure | Block audit write, retry redaction, alert if persistent | Regex engine error on malformed input |
 | Report Generation Failure | Persist raw run data, log failure, allow regeneration | Out-of-memory during large report assembly |
 | Demo Mode Violation | Reject connection, log attempt, maintain demo isolation | Accidental real host address in demo config |
+| Workload Coverage/Variance Failure | Pause candidate search, keep best verified version, request fresh baseline or DBA choice | Query fingerprint no longer represents the observed workload |
+| Configuration Ownership Conflict | Fail preflight without mutating target; show controlling source and remediation | postgres.auto.conf overrides a DBTune-owned conf.d setting |
+| Managed File Validation Failure | Preserve active file, record pg_file_settings errors, reject apply | Invalid value or syntax in rendered candidate file |
+| Reload Verification Failure | Atomically restore previous version, reload, verify rollback, block session | pg_reload_conf() false or pg_settings source/value mismatch |
+| Duplicate Host Agents | Block all target writes and emit coded event until one lease remains | Two agent processes report the same host identity |
 
 ### Retry Policies
 
@@ -944,4 +1327,3 @@ tests/
     ├── test_guardrail_blocking.py
     └── test_demo_mode.py
 ```
-
