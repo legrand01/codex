@@ -431,7 +431,10 @@ class ReportGenerator:
                     """
                     INSERT INTO dba_reports (id, run_id, goal, host_id, outcome_status,
                                            report_content, generated_at, expires_at)
-                    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $7 + INTERVAL '90 days')
+                    VALUES (
+                        $1, $2, $3, $4, $5, $6::jsonb,
+                        $7::timestamptz, $7::timestamptz + INTERVAL '90 days'
+                    )
                     ON CONFLICT (run_id) DO UPDATE SET
                         goal = EXCLUDED.goal,
                         outcome_status = EXCLUDED.outcome_status,

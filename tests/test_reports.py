@@ -355,6 +355,8 @@ class TestGetReportEndpoint:
         assert data["goal"] == "Optimize query performance"
         assert data["outcome_status"] == "success"
         assert len(data["evidence_summaries"]) == 1
+        report_query = mock_conn.fetchrow.await_args.args[0]
+        assert "SELECT d.id, d.run_id" in report_query
 
     @pytest.mark.asyncio
     async def test_get_report_not_found_generation_fails(self, client):

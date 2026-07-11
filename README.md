@@ -1,6 +1,7 @@
 # Autonomous Postgres DBA Agent Platform
 
 Production operators should follow the [P0 production release runbook](docs/production-release-p0.md).
+For a disposable database with sustained traffic, use the [P0 tuning lab](docs/tuning-lab.md).
 
 A web-based control plane for autonomous PostgreSQL investigation and tuning loops. The platform enables database administrators to run guarded, autonomous DBA loops that follow a structured workflow: **observe -> snapshot -> diagnose -> propose plan -> safety check -> approval gate -> dry-run -> apply -> verify -> measure -> keep/rollback -> report**.
 

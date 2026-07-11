@@ -135,7 +135,55 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  target-postgres:
+    image: postgres:16-alpine
+    profiles: ["tuning-lab"]
+    ports:
+      - "${TARGET_PG_PORT:-55433}:5432"
+    environment:
+      - POSTGRES_USER=dbtune
+      - POSTGRES_PASSWORD=dbtune-lab-only
+      - POSTGRES_DB=dbtune_target
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      - target_postgres_data:/var/lib/postgresql/data
+      - ./docker/dbtune-target/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbtune -d dbtune_target"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+
+  target-workload:
+    image: postgres:16-alpine
+    profiles: ["tuning-lab"]
+    environment:
+      - PGHOST=target-postgres
+      - PGPORT=5432
+      - PGUSER=dbtune
+      - PGPASSWORD=dbtune-lab-only
+      - PGDATABASE=dbtune_target
+    volumes:
+      - ./docker/dbtune-target/transaction.sql:/workload/transaction.sql:ro
+      - ./docker/dbtune-target/analytics.sql:/workload/analytics.sql:ro
+      - ./docker/dbtune-target/run-workload.sh:/workload/run-workload.sh:ro
+    command: ["/bin/sh", "/workload/run-workload.sh"]
+    depends_on:
+      target-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:
   host_agent_buffer:
+  target_postgres_data:

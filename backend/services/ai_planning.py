@@ -347,6 +347,15 @@ def _analyze_pg_settings(evidence: List[dict], goal: str) -> List[dict]:
         data = item.get("data", {})
         if not isinstance(data, dict):
             continue
+        raw_settings = data.get("settings")
+        if isinstance(raw_settings, list):
+            data = {
+                str(entry["name"]): entry.get("setting")
+                for entry in raw_settings
+                if isinstance(entry, dict) and entry.get("name")
+            }
+        elif isinstance(raw_settings, dict):
+            data = raw_settings
 
         # Rule-based tuning suggestions
         # Check shared_buffers
@@ -664,6 +673,15 @@ async def diagnose(
     available_types = [item.get("evidence_type", "") for item in evidence]
     analyses = _analyze_pg_settings(evidence, goal)
     analyses.extend(_analyze_query_indexes(evidence, goal))
+    deduplicated = []
+    seen_recommendations = set()
+    for analysis in analyses:
+        key = (analysis.get("change_type", "setting"), analysis.get("setting_name"))
+        if key in seen_recommendations:
+            continue
+        seen_recommendations.add(key)
+        deduplicated.append(analysis)
+    analyses = deduplicated
 
     # Extract evidence references
     evidence_refs = _extract_evidence_references(evidence)

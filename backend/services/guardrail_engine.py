@@ -808,6 +808,8 @@ def validate_rollback_plan(
         instruction = rollback_map[setting_name]
         restore_value = instruction.get("restore_value")
         pre_value = pre_snapshot.get(setting_name)
+        if isinstance(pre_value, dict):
+            pre_value = pre_value.get("value")
 
         if pre_value is None:
             errors.append(f"Setting '{setting_name}' not found in pre-change snapshot")

@@ -12,6 +12,7 @@ and reports heartbeats at a configurable interval.
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -378,7 +379,9 @@ class HostAgent:
         url = f"{self.config.control_plane_url}/api/v1/fleet/{self.config.host_id}/evidence"
         try:
             response = await self._http_client.post(
-                url, json=snapshot, headers=self._agent_headers()
+                url,
+                json=json.loads(json.dumps(snapshot, default=str)),
+                headers=self._agent_headers(),
             )
             if 200 <= response.status_code < 300:
                 return True
@@ -414,12 +417,16 @@ if __name__ == "__main__":
 
     async def main() -> None:
         config = AgentConfig.from_env()
-        conn = await asyncpg.connect(config.pg_connection_string)
-        agent = HostAgent(config, conn=conn)
+        pool = await asyncpg.create_pool(
+            config.pg_connection_string,
+            min_size=2,
+            max_size=10,
+        )
+        agent = HostAgent(config, conn=pool)
         try:
             await agent.start()
         finally:
             await agent.stop()
-            await conn.close()
+            await pool.close()
 
     asyncio.run(main())

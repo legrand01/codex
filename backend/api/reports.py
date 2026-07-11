@@ -211,8 +211,8 @@ async def get_report(
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, run_id, goal, host_id, outcome_status,
-                       report_content, generated_at, expires_at
+                SELECT d.id, d.run_id, d.goal, d.host_id, d.outcome_status,
+                       d.report_content, d.generated_at, d.expires_at
                 FROM dba_reports d
                 JOIN loop_runs r ON r.id = d.run_id
                 WHERE d.run_id = $1 AND r.organization_id = $2

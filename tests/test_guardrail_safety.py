@@ -258,6 +258,23 @@ class TestExecuteDryRun:
 class TestValidateRollbackPlan:
     """Tests for validate_rollback_plan function."""
 
+    def test_accepts_authoritative_target_snapshot_shape(self):
+        proposed_changes = [{"setting_name": "work_mem", "proposed_value": "8MB"}]
+        rollback_instructions = [{"setting_name": "work_mem", "restore_value": "64kB"}]
+        pre_snapshot = {
+            "work_mem": {
+                "value": "64kB",
+                "source": "command line",
+                "in_auto_conf": False,
+            }
+        }
+
+        result = validate_rollback_plan(
+            proposed_changes, rollback_instructions, pre_snapshot
+        )
+
+        assert result.valid is True
+
     def test_valid_rollback_plan(self):
         """Rollback plan with all settings and matching values → valid."""
         proposed_changes = [

@@ -404,7 +404,11 @@ class DBALoopWorker:
                 "id": row["id"],
                 "evidence_type": row["evidence_type"],
                 "collected_at": row["collected_at"],
-                "data": row["data"],
+                "data": (
+                    json.loads(row["data"])
+                    if isinstance(row["data"], str)
+                    else row["data"]
+                ),
                 "quality_score": row["quality_score"],
             }
             for row in rows
@@ -415,6 +419,31 @@ class DBALoopWorker:
             evidence=evidence,
             current_settings=self._extract_current_settings(evidence),
         )
+
+        # The P0 executor only permits online settings captured in the
+        # authoritative allowlisted snapshot.  Keep broader planner ideas out
+        # of an executable plan instead of relying on a later all-or-nothing
+        # guardrail rejection.
+        if pre_change_snapshot is not None:
+            allowed_settings = set(pre_change_snapshot)
+            plan.proposed_changes = [
+                change
+                for change in plan.proposed_changes
+                if change.get("change_type", "setting") == "setting"
+                and change.get("setting_name") in allowed_settings
+            ]
+            plan.rollback_instructions = [
+                instruction
+                for instruction in plan.rollback_instructions
+                if instruction.get("setting_name") in allowed_settings
+            ]
+            for change in plan.proposed_changes:
+                state = pre_change_snapshot[change["setting_name"]]
+                change["current_value"] = state["value"]
+            for instruction in plan.rollback_instructions:
+                state = pre_change_snapshot[instruction["setting_name"]]
+                instruction["restore_value"] = state["value"]
+            plan.is_actionable = bool(plan.proposed_changes)
 
         if not plan.is_actionable:
             await self.audit_logger.log(

@@ -249,6 +249,40 @@ class TestDiagnose:
         assert result.evidence_quality_report.sufficient is False
 
     @pytest.mark.asyncio
+    async def test_diagnosis_understands_host_agent_settings_list(self):
+        """Planner accepts the actual pg_settings collector payload shape."""
+        evidence = make_full_evidence_set()
+        evidence[0]["data"] = {
+            "settings": [
+                {"name": "work_mem", "setting": "64kB"},
+                {"name": "shared_buffers", "setting": "128MB"},
+            ],
+            "total_count": 2,
+        }
+
+        result = await diagnose(evidence, "reduce query sort temp files")
+
+        assert any(rec.setting_name == "work_mem" for rec in result.recommendations)
+
+    @pytest.mark.asyncio
+    async def test_diagnosis_deduplicates_repeated_setting_snapshots(self):
+        """Repeated collector snapshots produce one executable recommendation."""
+        evidence = make_full_evidence_set()
+        evidence.append(
+            make_evidence_snapshot(
+                "pg_settings",
+                data={"settings": [{"name": "work_mem", "setting": "64kB"}]},
+            )
+        )
+
+        result = await diagnose(evidence, "reduce query sort temp files")
+
+        work_mem = [
+            rec for rec in result.recommendations if rec.setting_name == "work_mem"
+        ]
+        assert len(work_mem) == 1
+
+    @pytest.mark.asyncio
     async def test_diagnosis_inconclusive_with_poor_evidence(self):
         """Diagnosis with insufficient evidence marks recommendations inconclusive."""
         # Only provide minimal, stale evidence

@@ -91,11 +91,14 @@ class RunQueue:
             await conn.execute(
                 """
                 UPDATE run_jobs
-                SET status = $3, last_error = $4,
+                SET status = $3::varchar, last_error = $4,
                     available_at = NOW() + ($5 * INTERVAL '1 second'),
                     claimed_by = NULL, claimed_at = NULL, lease_expires_at = NULL,
                     updated_at = NOW(),
-                    completed_at = CASE WHEN $3 = 'failed' THEN NOW() ELSE NULL END
+                    completed_at = CASE
+                        WHEN $3::varchar = 'failed' THEN NOW()
+                        ELSE NULL
+                    END
                 WHERE id = $1 AND claimed_by = $2
                 """,
                 job.job_id,
