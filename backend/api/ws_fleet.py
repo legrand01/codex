@@ -12,8 +12,10 @@ Requirements: 1.3, 2.2
 """
 
 import asyncio
+import json
 import logging
 from typing import Set
+from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -43,7 +45,7 @@ class FleetConnectionManager:
 
     async def connect(self, websocket: WebSocket) -> None:
         """Accept a WebSocket connection and register it."""
-        await websocket.accept()
+        await websocket.accept(subprotocol="dbtune-auth")
         self.active_connections.add(websocket)
         logger.info(
             f"Fleet WebSocket client connected. Total connections: {len(self.active_connections)}"
@@ -80,7 +82,7 @@ class FleetConnectionManager:
 fleet_manager = FleetConnectionManager()
 
 
-async def _redis_listener(websocket: WebSocket) -> None:
+async def _redis_listener(websocket: WebSocket, organization_id: UUID) -> None:
     """
     Listen to Redis pub/sub channels and forward events to the WebSocket client.
 
@@ -114,8 +116,26 @@ async def _redis_listener(websocket: WebSocket) -> None:
                 if isinstance(data, bytes):
                     data = data.decode("utf-8")
 
-                # Forward the event directly to the WebSocket client
-                await websocket.send_text(data)
+                # Filter every fleet event through the authenticated tenant.
+                try:
+                    payload = json.loads(data)
+                    host_id = UUID(payload["host_id"])
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                from backend.db.pool import get_pool
+
+                pool = get_pool()
+                if pool is None:
+                    continue
+                async with pool.acquire() as conn:
+                    owned = await conn.fetchval(
+                        "SELECT EXISTS (SELECT 1 FROM hosts "
+                        "WHERE id = $1 AND organization_id = $2)",
+                        host_id,
+                        organization_id,
+                    )
+                if owned:
+                    await websocket.send_text(data)
             else:
                 # Small sleep to prevent tight loop when no messages
                 await asyncio.sleep(0.1)
@@ -143,10 +163,18 @@ async def websocket_fleet_status(websocket: WebSocket) -> None:
         "timestamp": "iso-string"
     }
     """
+    from backend.security import authenticate_websocket
+
+    principal = await authenticate_websocket(websocket)
+    if principal is None:
+        await websocket.close(code=4401, reason="Authentication is required")
+        return
     await fleet_manager.connect(websocket)
 
     # Create a task for listening to Redis pub/sub
-    listener_task = asyncio.create_task(_redis_listener(websocket))
+    listener_task = asyncio.create_task(
+        _redis_listener(websocket, principal.organization_id)
+    )
 
     try:
         # Keep the WebSocket connection alive by reading incoming messages

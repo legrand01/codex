@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, NavLink } from 'react-router-dom';
 import { DemoModeBanner } from './components';
-import { demoApi } from './api/client';
+import { demoApi, getApiToken, setApiToken } from './api/client';
 import {
   FleetOverview,
   ActiveRuns,
@@ -14,6 +14,8 @@ import {
 
 function App() {
   const [demoActive, setDemoActive] = useState(false);
+  const [authenticated, setAuthenticated] = useState(() => Boolean(getApiToken()));
+  const [token, setToken] = useState('');
 
   useEffect(() => {
     demoApi.getStatus().then((status) => {
@@ -33,6 +35,34 @@ function App() {
     paddingBottom: '2px',
   });
 
+  if (!authenticated) {
+    return (
+      <main style={{ maxWidth: 460, margin: '12vh auto', padding: '2rem' }}>
+        <h1>DBTune control plane</h1>
+        <p>Enter your API access token. It is kept only in this browser tab.</p>
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          const value = token.trim();
+          if (!value) return;
+          setApiToken(value);
+          setAuthenticated(true);
+        }}>
+          <input
+            aria-label="API access token"
+            type="password"
+            autoComplete="current-password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            style={{ width: '100%', padding: '0.75rem', boxSizing: 'border-box' }}
+          />
+          <button type="submit" style={{ marginTop: '1rem', padding: '0.65rem 1rem' }}>
+            Sign in
+          </button>
+        </form>
+      </main>
+    );
+  }
+
   return (
     <Router>
       <DemoModeBanner active={demoActive} />
@@ -47,6 +77,10 @@ function App() {
             <NavLink to="/rollback" style={navLinkStyle}>Rollback</NavLink>
             <NavLink to="/audit" style={navLinkStyle}>Audit</NavLink>
             <NavLink to="/reports" style={navLinkStyle}>Reports</NavLink>
+            <button onClick={() => {
+              setApiToken('');
+              setAuthenticated(false);
+            }} style={{ marginLeft: '1.5rem' }}>Sign out</button>
           </nav>
         </header>
         <main>

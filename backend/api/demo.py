@@ -14,9 +14,11 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from backend.config import settings
 from backend.db.pool import get_pool
+from backend.security import require_roles
 from backend.services.demo_mode import (
     SYNTHETIC_HOST_ADDRESSES,
     activate_demo_mode,
@@ -27,7 +29,16 @@ from backend.services.demo_mode import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/demo", tags=["demo"])
+router = APIRouter(
+    prefix="/api/v1/demo",
+    tags=["demo"],
+    dependencies=[Depends(require_roles("admin"))],
+)
+
+
+def _require_non_production_demo() -> None:
+    if settings.environment == "production":
+        raise HTTPException(status_code=404, detail="Demo mode is unavailable")
 
 
 def _jsonb(value: Any) -> str:
@@ -106,11 +117,14 @@ async def _seed_demo_database(db, data: Dict[str, Any]) -> None:
         row = await db.fetchrow(
             """
             INSERT INTO hosts (
-                id, hostname, pg_version, server_role, health_status,
+                id, organization_id, hostname, pg_version, server_role, health_status,
                 connection_status, last_heartbeat, restart_required_enabled
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (hostname) DO UPDATE SET
+            VALUES (
+                $1, '00000000-0000-0000-0000-000000000001'::uuid,
+                $2, $3, $4, $5, $6, $7, $8
+            )
+            ON CONFLICT (organization_id, hostname) DO UPDATE SET
                 pg_version = EXCLUDED.pg_version,
                 server_role = EXCLUDED.server_role,
                 health_status = EXCLUDED.health_status,
@@ -368,6 +382,7 @@ async def activate_demo():
     Raises:
         HTTPException 409: If demo mode is already active.
     """
+    _require_non_production_demo()
     try:
         result = activate_demo_mode()
         await _seed_demo_database_if_available(get_demo_data())
@@ -388,6 +403,7 @@ async def deactivate_demo():
     Raises:
         HTTPException 409: If demo mode is not currently active.
     """
+    _require_non_production_demo()
     try:
         result = deactivate_demo_mode()
         await _clear_demo_database_if_available()
@@ -405,4 +421,5 @@ async def demo_status():
     Returns:
         Current demo mode state and summary if active.
     """
+    _require_non_production_demo()
     return get_demo_status()

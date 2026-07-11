@@ -12,6 +12,7 @@ Requirements: 12.1, 12.2, 12.3, 12.4, 12.5
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Dict, Optional
 from uuid import UUID
 
@@ -64,6 +65,7 @@ async def collect_verification_evidence(
     host_id: UUID,
     observation_window_seconds: int = 60,
     pool=None,
+    after_time: Optional[datetime] = None,
 ) -> Optional[Dict]:
     """
     Collect verification evidence from the target host after waiting
@@ -101,17 +103,20 @@ async def collect_verification_evidence(
             return None
 
         evidence = {}
+        found = 0
         async with pool.acquire() as conn:
             for category in METRIC_CATEGORIES:
                 row = await conn.fetchrow(
                     """
                     SELECT data FROM evidence_snapshots
                     WHERE host_id = $1 AND evidence_type = $2
+                      AND ($3::timestamptz IS NULL OR collected_at > $3)
                     ORDER BY collected_at DESC
                     LIMIT 1
                     """,
                     host_id,
                     category,
+                    after_time,
                 )
                 if row and row["data"]:
                     # Data is stored as JSONB - parse it
@@ -121,10 +126,11 @@ async def collect_verification_evidence(
 
                         data = json.loads(data)
                     evidence[category] = data
+                    found += 1
                 else:
                     evidence[category] = {}
 
-        return evidence
+        return evidence if found else None
 
     except Exception as e:
         logger.error(f"Failed to collect verification evidence: {e}")
@@ -194,6 +200,7 @@ async def verify_and_decide(
     config: LoopConfig,
     pool=None,
     audit_logger: Optional[AuditLogger] = None,
+    applied_at: Optional[datetime] = None,
 ) -> Dict:
     """
     Orchestrate post-apply verification and make rollback/keep decision.
@@ -233,10 +240,11 @@ async def verify_and_decide(
         host_id=host_id,
         observation_window_seconds=observation_window,
         pool=pool,
+        after_time=applied_at,
     )
 
     # Step 2: Handle collection failure -> rollback
-    if post_evidence is None:
+    if not pre_evidence or not post_evidence:
         failure_reason = (
             "Failed to collect verification evidence within observation window "
             f"({observation_window}s) - host may be unavailable"
@@ -280,7 +288,9 @@ async def verify_and_decide(
         # A positive delta in "degradation" metrics means things got worse
         # We check if the absolute change exceeds threshold
         # For degradation, we check if delta exceeds threshold (positive = worse)
-        if abs(delta) > threshold:
+        lower_is_worse = metric_name == "pg_stat_database"
+        degraded = delta < -threshold if lower_is_worse else delta > threshold
+        if degraded:
             logger.warning(
                 f"Metric '{metric_name}' degraded by {delta:.2f}% "
                 f"(threshold: {threshold}%) for run {run_id}"
@@ -356,56 +366,58 @@ async def _initiate_rollback(plan_id: UUID, pool=None) -> None:
         plan_id: UUID of the plan to rollback.
         pool: Optional database connection pool.
     """
+    if pool is None:
+        from backend.db.pool import get_pool
+
+        pool = get_pool()
+    if pool is None:
+        raise RuntimeError("Database pool is unavailable for rollback")
+
     try:
-        if pool is None:
-            from backend.db.pool import get_pool
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT host_id, rollback_instructions, pre_change_snapshot
+                FROM plans
+                WHERE id = $1
+                """,
+                plan_id,
+            )
+        if not row or not row["rollback_instructions"] or not row["pre_change_snapshot"]:
+            raise RuntimeError(f"Plan {plan_id} lacks verified rollback state")
 
-            pool = get_pool()
+        import json
 
-        if pool is not None:
-            async with pool.acquire() as conn:
-                # Get rollback instructions
-                row = await conn.fetchrow(
-                    """
-                    SELECT rollback_instructions FROM plans WHERE id = $1
-                    """,
-                    plan_id,
-                )
+        from backend.services.rollback_service import execute_rollback
 
-                if row and row["rollback_instructions"]:
-                    import json
+        instructions = row["rollback_instructions"]
+        snapshot = row["pre_change_snapshot"]
+        if isinstance(instructions, str):
+            instructions = json.loads(instructions)
+        if isinstance(snapshot, str):
+            snapshot = json.loads(snapshot)
 
-                    from backend.services.rollback_service import execute_rollback
+        await execute_rollback(
+            plan_id,
+            instructions,
+            host_id=row["host_id"],
+            pre_change_snapshot=snapshot,
+            control_pool=pool,
+        )
 
-                    instructions = row["rollback_instructions"]
-                    if isinstance(instructions, str):
-                        instructions = json.loads(instructions)
-
-                    await execute_rollback(plan_id, instructions)
-
-                    # Update plan status to rolled_back
-                    await conn.execute(
-                        """
-                        UPDATE plans SET status = 'rolled_back',
-                        rolled_back_at = NOW()
-                        WHERE id = $1
-                        """,
-                        plan_id,
-                    )
-                else:
-                    logger.error(f"No rollback instructions found for plan {plan_id}")
-    except Exception as e:
-        logger.error(f"Failed to initiate rollback for plan {plan_id}: {e}")
-        # Update plan status to rollback_failed
-        try:
-            if pool is not None:
-                async with pool.acquire() as conn:
-                    await conn.execute(
-                        """
-                        UPDATE plans SET status = 'rollback_failed'
-                        WHERE id = $1
-                        """,
-                        plan_id,
-                    )
-        except Exception as inner_e:
-            logger.error(f"Failed to update plan status to rollback_failed: {inner_e}")
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE plans
+                SET status = 'rolled_back', rolled_back_at = NOW()
+                WHERE id = $1
+                """,
+                plan_id,
+            )
+    except Exception:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE plans SET status = 'rollback_failed' WHERE id = $1",
+                plan_id,
+            )
+        raise

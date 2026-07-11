@@ -13,10 +13,11 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.models.audit import AuditEntry
+from backend.security import Principal, require_roles
 from backend.services.audit_logger import AuditLoggerError, get_audit_logger
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ async def list_audit_entries(
     offset: int = Query(default=0, ge=0),
     start_time: Optional[datetime] = Query(default=None),
     end_time: Optional[datetime] = Query(default=None),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
 ) -> AuditListResponse:
     """
     List recent audit log entries with pagination.
@@ -65,6 +67,7 @@ async def list_audit_entries(
             time_range=time_range,
             limit=limit,
             offset=offset,
+            organization_id=principal.organization_id,
         )
     except AuditLoggerError as e:
         raise HTTPException(status_code=503, detail=f"Audit log query failed: {e}")
@@ -82,6 +85,7 @@ async def get_audit_entries_for_run(
     run_id: UUID,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
 ) -> AuditListResponse:
     """
     Get all audit log entries for a specific loop run.
@@ -97,6 +101,7 @@ async def get_audit_entries_for_run(
             run_id=run_id,
             limit=limit,
             offset=offset,
+            organization_id=principal.organization_id,
         )
     except AuditLoggerError as e:
         raise HTTPException(status_code=503, detail=f"Audit log query failed: {e}")

@@ -104,6 +104,19 @@ class MockConnection:
         return self.records
 
     async def fetchrow(self, query, *args):
+        if "INSERT INTO audit_log" in query:
+            return MockRecord(
+                id=1,
+                run_id=args[0],
+                timestamp=args[1],
+                actor_type=args[2],
+                actor_name=args[3],
+                action_type=args[4],
+                target_host_id=args[5],
+                result=args[6],
+                result_reason=args[7],
+                details=args[8],
+            )
         # Use pre-configured responses if available
         if self.fetchrow_responses:
             if self._fetchrow_call_count < len(self.fetchrow_responses):
@@ -122,6 +135,15 @@ class MockConnection:
 
     async def execute(self, query, *args):
         self.executed_queries.append((query, args))
+
+    def transaction(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
 
 
 def _override_db(mock_conn):
@@ -376,7 +398,7 @@ async def test_approve_plan_success():
                 assert response.status_code == 200
                 data = response.json()
                 assert data["plan_id"] == str(plan_id)
-                assert data["approved_by"] == "dba_admin"
+                assert data["approved_by"] == "development-admin"
                 assert "approved_at" in data
     finally:
         app.dependency_overrides.clear()
@@ -426,9 +448,12 @@ async def test_approve_plan_not_pending():
 
 
 @pytest.mark.asyncio
-async def test_approve_plan_missing_identity():
-    """POST /api/v1/plans/{plan_id}/approve returns 422 when approved_by is missing."""
-    mock_conn = MockConnection(records=[])
+async def test_approve_plan_uses_authenticated_identity():
+    """Approval identity comes from the principal, not request JSON."""
+    plan_id = uuid.uuid4()
+    plan = _make_plan_record(plan_id=plan_id, status="pending_approval")
+    mock_conn = MockConnection(records=[plan])
+    mock_conn.fetchrow_responses = [plan, MockRecord(status="approved")]
     dep, override = _override_db(mock_conn)
 
     app.dependency_overrides[dep] = override
@@ -436,10 +461,11 @@ async def test_approve_plan_missing_identity():
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.post(
-                f"/api/v1/plans/{uuid.uuid4()}/approve",
+                f"/api/v1/plans/{plan_id}/approve",
                 json={},
             )
-            assert response.status_code == 422
+            assert response.status_code == 200
+            assert response.json()["approved_by"] == "development-admin"
     finally:
         app.dependency_overrides.clear()
 
@@ -482,7 +508,7 @@ async def test_approve_plan_records_audit_log():
                 mock_audit_logger.log.assert_called_once()
                 call_kwargs = mock_audit_logger.log.call_args[1]
                 assert call_kwargs["actor_type"] == "human"
-                assert call_kwargs["actor_name"] == "senior_dba"
+                assert call_kwargs["actor_name"] == "development-admin"
                 assert call_kwargs["action_type"] == "plan_approved"
                 assert call_kwargs["result"] == "success"
     finally:
@@ -490,15 +516,15 @@ async def test_approve_plan_records_audit_log():
 
 
 @pytest.mark.asyncio
-async def test_approve_plan_forwarding_failure():
-    """POST /api/v1/plans/{plan_id}/approve handles forwarding failure gracefully."""
+async def test_approve_plan_does_not_execute_dry_run_inline():
+    """Approval commits identity; the worker owns the fresh live dry-run."""
     plan_id = uuid.uuid4()
     plan = _make_plan_record(plan_id=plan_id, status="pending_approval")
 
     mock_conn = MockConnection(records=[plan])
     mock_conn.fetchrow_responses = [
         plan,  # First: get plan for approval
-        MockRecord(status="forwarding_failed"),  # Second: get updated status
+        MockRecord(status="forwarding_failed"),
     ]
     dep, override = _override_db(mock_conn)
 
@@ -526,8 +552,8 @@ async def test_approve_plan_forwarding_failure():
                 )
                 assert response.status_code == 200
                 data = response.json()
-                assert data["status"] == "forwarding_failed"
-                assert "failed" in data["message"].lower()
+                assert data["status"] == "approved"
+                assert "fresh live dry-run" in data["message"]
     finally:
         app.dependency_overrides.clear()
 
@@ -575,7 +601,7 @@ async def test_reject_plan_success():
                 data = response.json()
                 assert data["plan_id"] == str(plan_id)
                 assert data["status"] == "rejected"
-                assert data["rejected_by"] == "dba_admin"
+                assert data["rejected_by"] == "development-admin"
                 assert data["reason"] == "Risk is too high for this workload pattern"
                 assert "rejected_at" in data
     finally:
@@ -762,7 +788,7 @@ async def test_reject_plan_records_audit_log():
                 mock_audit_logger.log.assert_called_once()
                 call_kwargs = mock_audit_logger.log.call_args[1]
                 assert call_kwargs["actor_type"] == "human"
-                assert call_kwargs["actor_name"] == "senior_dba"
+                assert call_kwargs["actor_name"] == "development-admin"
                 assert call_kwargs["action_type"] == "plan_rejected"
                 assert call_kwargs["result"] == "success"
                 assert call_kwargs["result_reason"] == "Insufficient evidence for this change"
@@ -772,7 +798,7 @@ async def test_reject_plan_records_audit_log():
 
 @pytest.mark.asyncio
 async def test_reject_plan_missing_fields():
-    """POST /api/v1/plans/{plan_id}/reject returns 422 when fields are missing."""
+    """Only a rejection reason is required; identity is authenticated."""
     mock_conn = MockConnection(records=[])
     dep, override = _override_db(mock_conn)
 
@@ -780,12 +806,12 @@ async def test_reject_plan_missing_fields():
     try:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # Missing rejected_by
+            # Missing rejected_by is accepted by validation; the unknown plan is then 404.
             response = await client.post(
                 f"/api/v1/plans/{uuid.uuid4()}/reject",
                 json={"reason": "This is a valid reason"},
             )
-            assert response.status_code == 422
+            assert response.status_code == 404
 
             # Missing reason
             response = await client.post(

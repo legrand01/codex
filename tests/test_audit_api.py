@@ -17,6 +17,7 @@ from httpx import ASGITransport, AsyncClient
 
 from backend.main import app
 from backend.models.audit import AuditEntry
+from backend.security import DEFAULT_ORGANIZATION_ID
 from backend.services.audit_logger import AuditLoggerError
 
 # =============================================================================
@@ -85,6 +86,10 @@ class TestListAuditEntries:
         assert len(data["entries"]) == 2
         assert data["entries"][0]["actor_type"] == "system"
         assert data["entries"][1]["actor_type"] == "human"
+        assert (
+            mock_logger.query.await_args.kwargs["organization_id"]
+            == DEFAULT_ORGANIZATION_ID
+        )
 
     @pytest.mark.asyncio
     async def test_list_audit_entries_empty(self, client):

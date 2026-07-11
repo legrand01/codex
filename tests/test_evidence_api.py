@@ -21,6 +21,7 @@ from backend.api.evidence import (
     format_freshness_age,
 )
 from backend.main import app
+from backend.security import DEFAULT_ORGANIZATION_ID
 
 # ---------------------------------------------------------------------------
 # Unit tests for format_freshness_age
@@ -174,8 +175,10 @@ class MockConnection:
     def __init__(self, records=None, single_record=None):
         self.records = records or []
         self.single_record = single_record
+        self.last_fetch_args = None
 
     async def fetch(self, query, *args):
+        self.last_fetch_args = args
         return self.records
 
     async def fetchrow(self, query, *args):
@@ -218,6 +221,7 @@ async def test_list_evidence_empty_state():
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(f"/api/v1/evidence/{run_id}")
             assert response.status_code == 200
+            assert mock_conn.last_fetch_args[1] == DEFAULT_ORGANIZATION_ID
             data = response.json()
             assert data["run_id"] == str(run_id)
             assert data["snapshots"] == []

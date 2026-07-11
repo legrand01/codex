@@ -144,7 +144,7 @@ class MockConnection:
 
 
 @pytest.fixture
-def valid_config():
+def valid_config(tmp_path):
     """Create a valid AgentConfig for testing."""
     return AgentConfig(
         host_id="test-host-001",
@@ -156,6 +156,7 @@ def valid_config():
         os_metrics_interval=15,
         max_query_entries=100,
         buffer_max_bytes=512 * 1024 * 1024,
+        buffer_dir=str(tmp_path / "agent-buffer"),
         heartbeat_interval=30,
     )
 
@@ -170,6 +171,26 @@ def mock_conn():
 def agent(valid_config, mock_conn):
     """Create a HostAgent with valid config and mock connection."""
     return HostAgent(config=valid_config, conn=mock_conn)
+
+
+@pytest.mark.asyncio
+async def test_evidence_submission_buffers_and_flushes_after_recovery(agent):
+    """A failed submission is persisted and flushed after connectivity returns."""
+    agent._http_client = MagicMock()
+    agent._http_client.post = AsyncMock(
+        side_effect=[
+            MagicMock(status_code=503),
+            MagicMock(status_code=201),
+            MagicMock(status_code=201),
+        ]
+    )
+
+    await agent._submit_evidence({"sequence": 1})
+    assert agent._evidence_buffer.current_count == 1
+
+    await agent._submit_evidence({"sequence": 2})
+    assert agent._evidence_buffer.current_count == 0
+    assert agent._http_client.post.await_count == 3
 
 
 # ============================================================================
@@ -276,6 +297,7 @@ class TestAgentConfig:
         monkeypatch.setenv("PG_STATS_INTERVAL", "60")
         monkeypatch.setenv("LOCKS_REPLICATION_INTERVAL", "30")
         monkeypatch.setenv("OS_METRICS_INTERVAL", "20")
+        monkeypatch.setenv("AGENT_AUTH_REQUIRED", "false")
 
         config = AgentConfig.from_env()
         assert config.host_id == "env-host-123"

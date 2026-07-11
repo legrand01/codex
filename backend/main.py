@@ -5,8 +5,9 @@ Autonomous Postgres DBA Agent Platform - FastAPI Application
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.api.audit import router as audit_router
 from backend.api.demo import router as demo_router
@@ -40,7 +41,13 @@ async def lifespan(app: FastAPI):
 
         await create_pool()
         logger.info("Database connection pool initialized.")
+        from backend.security import validate_security_configuration
+
+        await validate_security_configuration()
     except Exception as e:
+        if settings.environment == "production":
+            logger.exception("Production startup security/database validation failed")
+            raise
         logger.warning(f"Failed to create database pool (app will run degraded): {e}")
 
     # Attempt to initialize Redis client (non-fatal on failure)
@@ -78,6 +85,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def authentication_boundary(request: Request, call_next):
+    from backend.security import authenticate_request, is_public_or_agent_path
+
+    if is_public_or_agent_path(request):
+        return await call_next(request)
+    principal = await authenticate_request(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+    request.state.principal = principal
+    return await call_next(request)
 
 app.include_router(fleet_router)
 app.include_router(ws_fleet_router)

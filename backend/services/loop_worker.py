@@ -295,9 +295,96 @@ class DBALoopWorker:
                         settings[name] = entry.get("setting")
         return settings
 
-    async def _propose_plan(self, run_id: UUID, host_id: UUID, goal: str) -> StepResult:
+    async def _capture_target_snapshot(self, run_id: UUID, host_id: UUID) -> StepResult:
+        """Capture authoritative target values for every allowlisted setting."""
+        from backend.services.target_executor import TargetPostgresExecutor
+
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT setting_name
+                FROM guardrail_allowlist
+                WHERE host_id = $1
+                ORDER BY setting_name
+                """,
+                host_id,
+            )
+        setting_names = [row["setting_name"] for row in rows]
+        if not setting_names:
+            return StepResult(
+                step=WorkflowStep.SNAPSHOT,
+                success=False,
+                error="Cannot snapshot target: guardrail allowlist is empty",
+            )
+
+        try:
+            executor = TargetPostgresExecutor(self.pool)
+            snapshot = await executor.capture_snapshot(host_id, setting_names)
+            collected_at = datetime.now(timezone.utc)
+            evidence_data = {
+                "settings": [
+                    {
+                        "name": name,
+                        "setting": state["value"],
+                        "unit": state.get("unit"),
+                        "context": state.get("context"),
+                        "source": state.get("source"),
+                        "sourcefile": state.get("sourcefile"),
+                        "pending_restart": state.get("pending_restart", False),
+                        "in_auto_conf": state.get("in_auto_conf", False),
+                    }
+                    for name, state in snapshot.items()
+                ],
+                "total_count": len(snapshot),
+                "authoritative_target_snapshot": True,
+            }
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO evidence_snapshots (
+                        run_id, host_id, evidence_type, collected_at, data, quality_score
+                    ) VALUES ($1, $2, 'pg_settings', $3, $4::jsonb, 1.0)
+                    """,
+                    run_id,
+                    host_id,
+                    collected_at,
+                    json.dumps(evidence_data),
+                )
+            await self.audit_logger.log(
+                run_id=run_id,
+                actor_type="system",
+                actor_name="loop_worker",
+                action_type="target_snapshot_captured",
+                target_host_id=host_id,
+                result="success",
+                details={"settings": sorted(snapshot), "collected_at": collected_at.isoformat()},
+            )
+            return StepResult(
+                step=WorkflowStep.SNAPSHOT,
+                success=True,
+                data={"pre_change_snapshot": snapshot},
+            )
+        except Exception as exc:
+            return StepResult(
+                step=WorkflowStep.SNAPSHOT,
+                success=False,
+                error=f"Authoritative target snapshot failed: {exc}",
+            )
+
+    async def _propose_plan(
+        self,
+        run_id: UUID,
+        host_id: UUID,
+        goal: str,
+        pre_change_snapshot: Optional[dict] = None,
+    ) -> StepResult:
         """Generate and persist a pending approval plan from recent evidence."""
-        from backend.services.ai_planning import diagnose, generate_plan
+        from backend.services.ai_planning import (
+            PLANNER_KIND,
+            PLANNING_POLICY_VERSION,
+            diagnose,
+            generate_plan,
+        )
 
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
@@ -350,15 +437,22 @@ class DBALoopWorker:
                 },
             )
 
+        pre_change_snapshot = pre_change_snapshot or {}
         async with self.pool.acquire() as conn:
             plan_id = await conn.fetchval(
                 """
                 INSERT INTO plans (
-                    run_id, host_id, status, proposed_changes, evidence_references,
+                    run_id, host_id, organization_id, status,
+                    proposed_changes, evidence_references,
                     risk_score, confidence_score, uncertainty_explanation,
-                    rollback_instructions
+                    rollback_instructions, pre_change_snapshot,
+                    planning_policy_version, planner_kind
                 )
-                VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9::jsonb)
+                VALUES (
+                    $1, $2, (SELECT organization_id FROM hosts WHERE id = $2),
+                    $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb,
+                    $11, $12
+                )
                 RETURNING id
                 """,
                 run_id,
@@ -370,6 +464,9 @@ class DBALoopWorker:
                 plan.confidence_score,
                 plan.uncertainty_explanation,
                 json.dumps(plan.rollback_instructions),
+                json.dumps(pre_change_snapshot),
+                PLANNING_POLICY_VERSION,
+                PLANNER_KIND,
             )
 
         await self.audit_logger.log(
@@ -383,6 +480,9 @@ class DBALoopWorker:
                 "plan_id": str(plan_id),
                 "proposed_changes_count": len(plan.proposed_changes),
                 "confidence_score": plan.confidence_score,
+                "pre_change_snapshot": pre_change_snapshot,
+                "planning_policy_version": PLANNING_POLICY_VERSION,
+                "planner_kind": PLANNER_KIND,
             },
         )
         return StepResult(
@@ -396,6 +496,7 @@ class DBALoopWorker:
                 "evidence_references": plan.evidence_references,
                 "confidence_score": plan.confidence_score,
                 "proposed_changes_count": len(plan.proposed_changes),
+                "pre_change_snapshot": pre_change_snapshot,
             },
         )
 
@@ -626,6 +727,8 @@ class DBALoopWorker:
             if host_row:
                 host_id = host_row["id"]
                 self._host_id = host_id
+        if host_id is None:
+            raise RuntimeError("A registered target host is required to start a P0 run")
 
         async with self.pool.acquire() as conn:
             await conn.execute(
@@ -673,6 +776,8 @@ class DBALoopWorker:
         active_plan: Optional[dict] = None
         diagnostic_report: Optional[dict] = None
         completed_diagnostic_only = False
+        completed_goal = False
+        pre_change_snapshot: dict = {}
 
         try:
             for iteration in range(1, config.max_iterations + 1):
@@ -712,8 +817,38 @@ class DBALoopWorker:
                                 failure_reason=failure_reason,
                             )
 
+                    elif step == WorkflowStep.SNAPSHOT:
+                        result = await self._capture_target_snapshot(run_id, host_id)
+                        if not result.success:
+                            failure_reason = result.error
+                            await self._update_run_status(run_id, "failed", failure_reason)
+                            await self.audit_logger.log(
+                                run_id=run_id,
+                                actor_type="system",
+                                actor_name="loop_worker",
+                                action_type="target_snapshot_failed",
+                                target_host_id=host_id,
+                                result="failure",
+                                result_reason=failure_reason,
+                            )
+                            _active_runs.pop(str(run_id), None)
+                            return RunResult(
+                                run_id=run_id,
+                                status="failed",
+                                goal=goal,
+                                iterations_completed=iterations_completed,
+                                steps_executed=steps_executed,
+                                failure_reason=failure_reason,
+                            )
+                        pre_change_snapshot = result.data["pre_change_snapshot"]
+
                     elif step == WorkflowStep.PROPOSE_PLAN:
-                        result = await self._propose_plan(run_id, host_id, goal)
+                        result = await self._propose_plan(
+                            run_id,
+                            host_id,
+                            goal,
+                            pre_change_snapshot=pre_change_snapshot,
+                        )
                         if not result.success:
                             failure_reason = result.error
                             await self._update_run_status(run_id, "failed", failure_reason)
@@ -822,7 +957,7 @@ class DBALoopWorker:
                             host_id=host_id,
                             proposed_changes=proposed_changes,
                             rollback_instructions=rollback_instructions,
-                            pre_snapshot={},
+                            pre_snapshot=active_plan.get("pre_change_snapshot") or {},
                             config=config,
                         )
                         if not safety_result.success:
@@ -838,16 +973,123 @@ class DBALoopWorker:
                                 failure_reason=failure_reason,
                             )
 
+                    elif step == WorkflowStep.DRY_RUN:
+                        if not active_plan:
+                            raise RuntimeError("Dry-run reached without an active plan")
+                        from backend.services.guardrail_engine import execute_dry_run
+
+                        dry_run = await execute_dry_run(
+                            proposed_changes=active_plan["proposed_changes"],
+                            host_id=host_id,
+                            pool=self.pool,
+                            audit_logger=self.audit_logger,
+                        )
+                        if not dry_run.passed:
+                            failure_reason = (
+                                "Post-approval dry-run failed: " + "; ".join(dry_run.errors)
+                            )
+                            async with self.pool.acquire() as conn:
+                                await conn.execute(
+                                    "UPDATE plans SET status = $1 WHERE id = $2",
+                                    PlanStatus.DRY_RUN_FAILED.value,
+                                    UUID(active_plan["plan_id"]),
+                                )
+                            await self._update_run_status(run_id, "failed", failure_reason)
+                            _active_runs.pop(str(run_id), None)
+                            return RunResult(
+                                run_id=run_id,
+                                status="failed",
+                                goal=goal,
+                                iterations_completed=iterations_completed,
+                                steps_executed=steps_executed,
+                                failure_reason=failure_reason,
+                            )
+                        approved_snapshot = active_plan.get("pre_change_snapshot") or {}
+                        if (
+                            dry_run.pre_change_snapshot
+                            and dry_run.pre_change_snapshot != approved_snapshot
+                        ):
+                            failure_reason = "Target configuration drifted after plan creation"
+                            await self._update_run_status(run_id, "failed", failure_reason)
+                            _active_runs.pop(str(run_id), None)
+                            return RunResult(
+                                run_id=run_id,
+                                status="failed",
+                                goal=goal,
+                                iterations_completed=iterations_completed,
+                                steps_executed=steps_executed,
+                                failure_reason=failure_reason,
+                            )
+                        async with self.pool.acquire() as conn:
+                            await conn.execute(
+                                "UPDATE plans SET status = $1 WHERE id = $2",
+                                PlanStatus.DRY_RUN_PASSED.value,
+                                UUID(active_plan["plan_id"]),
+                            )
+
+                    elif step == WorkflowStep.APPLY:
+                        if not active_plan:
+                            raise RuntimeError("Apply reached without an active plan")
+                        from backend.services.plan_execution import PlanExecutionService
+
+                        outcome = await PlanExecutionService(
+                            self.pool,
+                            audit_logger=self.audit_logger,
+                        ).execute(UUID(active_plan["plan_id"]))
+                        active_plan["apply_result"] = outcome.result
+
+                    elif step == WorkflowStep.VERIFY:
+                        if not active_plan or not active_plan.get("apply_result"):
+                            raise RuntimeError("Verify reached without a completed target apply")
+                        from backend.services.target_executor import TargetPostgresExecutor
+
+                        expected_values = {
+                            change["setting_name"]: change["proposed_value"]
+                            for change in active_plan["proposed_changes"]
+                        }
+                        verified_values = await TargetPostgresExecutor(
+                            self.pool
+                        ).verify_expected_values(host_id, expected_values)
+                        verification_result = {
+                            "configuration_verified": True,
+                            "verified_values": verified_values,
+                            "verified_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        active_plan["verification_result"] = verification_result
+                        async with self.pool.acquire() as conn:
+                            await conn.execute(
+                                """
+                                UPDATE plans
+                                SET verification_result = $2::jsonb,
+                                    verification_completed_at = NOW()
+                                WHERE id = $1
+                                """,
+                                UUID(active_plan["plan_id"]),
+                                json.dumps(verification_result),
+                            )
+                        await self.audit_logger.log(
+                            run_id=run_id,
+                            actor_type="system",
+                            actor_name="loop_worker",
+                            action_type="target_configuration_verified",
+                            target_host_id=host_id,
+                            result="success",
+                            details={
+                                "plan_id": active_plan["plan_id"],
+                                "verified_values": verified_values,
+                            },
+                        )
+
                     elif step == WorkflowStep.REPORT:
-                        # Generate final report at end
-                        pass
+                        completed_goal = True
+                        iterations_completed = iteration
 
                     else:
                         # Other steps: log transition, update heartbeat
                         self._update_heartbeat()
                         await asyncio.sleep(0)  # yield control
 
-                if completed_diagnostic_only:
+                if completed_diagnostic_only or completed_goal:
                     break
 
                 iterations_completed = iteration
@@ -866,12 +1108,38 @@ class DBALoopWorker:
                 steps_executed=steps_executed,
                 failure_reason=failure_reason,
             )
+        except Exception as exc:
+            failure_reason = f"Run execution failed: {exc}"
+            await self._update_run_status(run_id, "failed", failure_reason)
+            try:
+                await self.audit_logger.log(
+                    run_id=run_id,
+                    actor_type="system",
+                    actor_name="loop_worker",
+                    action_type="run_failed",
+                    target_host_id=host_id,
+                    result="failure",
+                    result_reason=failure_reason,
+                    details={"current_step": step.value if "step" in locals() else None},
+                )
+            finally:
+                _active_runs.pop(str(run_id), None)
+            return RunResult(
+                run_id=run_id,
+                status="failed",
+                goal=goal,
+                iterations_completed=iterations_completed,
+                steps_executed=steps_executed,
+                failure_reason=failure_reason,
+            )
 
         # Determine final status
         if self._halted:
             final_status = "manually_halted"
             failure_reason = "Run manually halted by DBA"
         elif completed_diagnostic_only:
+            final_status = "completed"
+        elif completed_goal:
             final_status = "completed"
         elif iterations_completed >= config.max_iterations:
             # Max iterations reached without achieving goal
@@ -895,6 +1163,17 @@ class DBALoopWorker:
 
         await self._update_run_status(run_id, final_status, failure_reason)
 
+        if completed_goal:
+            try:
+                from backend.services.report_generator import ReportGenerator
+
+                report = await ReportGenerator(pool=self.pool).generate_report(run_id)
+                diagnostic_report = report.model_dump(mode="json")
+            except Exception as exc:
+                final_status = "failed"
+                failure_reason = f"Final report generation failed: {exc}"
+                await self._update_run_status(run_id, final_status, failure_reason)
+
         # Log run completion
         await self.audit_logger.log(
             run_id=run_id,
@@ -902,7 +1181,8 @@ class DBALoopWorker:
             actor_name="loop_worker",
             action_type="run_completed",
             target_host_id=host_id,
-            result="success",
+            result="success" if final_status == "completed" else "failure",
+            result_reason=failure_reason,
             details={
                 "status": final_status,
                 "iterations_completed": iterations_completed,

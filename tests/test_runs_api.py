@@ -32,9 +32,16 @@ async def api_client():
 def _mock_db_dependency():
     """Create a mock database connection dependency override."""
     mock_conn = AsyncMock()
-    mock_conn.fetchrow = AsyncMock(return_value=None)
+    mock_conn.fetchrow = AsyncMock(
+        return_value={"id": uuid4(), "organization_id": uuid4()}
+    )
     mock_conn.fetch = AsyncMock(return_value=[])
+    mock_conn.fetchval = AsyncMock(return_value=False)
     mock_conn.execute = AsyncMock()
+    transaction = AsyncMock()
+    transaction.__aenter__ = AsyncMock(return_value=transaction)
+    transaction.__aexit__ = AsyncMock(return_value=None)
+    mock_conn.transaction = MagicMock(return_value=transaction)
     return mock_conn
 
 
@@ -70,7 +77,7 @@ class TestStartRunEndpoint:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "running"
+        assert data["status"] == "queued"
         assert data["goal"] == "Optimize query performance"
 
     @pytest.mark.asyncio
@@ -130,6 +137,7 @@ class TestStartRunEndpoint:
     async def test_start_run_invalid_host_id(self, api_client):
         """Starting a run with invalid host_id format."""
         mock_conn = _mock_db_dependency()
+        mock_conn.fetchrow = AsyncMock(return_value=None)
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
@@ -170,6 +178,9 @@ class TestHaltRunEndpoint:
         )
 
         mock_conn = _mock_db_dependency()
+        mock_conn.fetchrow = AsyncMock(
+            return_value={"id": run_id, "status": "running", "current_step": "observe"}
+        )
 
         with patch("backend.services.loop_worker.get_active_runs", return_value={}):
             with patch("backend.services.loop_worker.get_loop_worker", return_value=mock_worker):
@@ -204,6 +215,9 @@ class TestHaltRunEndpoint:
         )
 
         mock_conn = _mock_db_dependency()
+        mock_conn.fetchrow = AsyncMock(
+            return_value={"id": run_id, "status": "completed", "current_step": "report"}
+        )
 
         with patch("backend.services.loop_worker.get_active_runs", return_value={}):
             with patch("backend.services.loop_worker.get_loop_worker", return_value=mock_worker):
@@ -235,6 +249,7 @@ class TestHaltRunEndpoint:
         )
 
         mock_conn = _mock_db_dependency()
+        mock_conn.fetchrow = AsyncMock(return_value=None)
 
         with patch("backend.services.loop_worker.get_active_runs", return_value={}):
             with patch("backend.services.loop_worker.get_loop_worker", return_value=mock_worker):
@@ -249,7 +264,7 @@ class TestHaltRunEndpoint:
                     mock_get_pool.return_value = mock_pool
                     response = await api_client.post(f"/api/v1/runs/{run_id}/halt")
 
-        assert response.status_code == 409
+        assert response.status_code == 404
 
 
 # --- Get Run Status Tests ---

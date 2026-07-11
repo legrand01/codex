@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.dependencies import get_db
+from backend.security import Principal, require_roles
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,11 @@ def _parse_json_field(value) -> dict:
 
 
 @router.get("/snapshot/{snapshot_id}", response_model=EvidenceSnapshotResponse)
-async def get_evidence_snapshot(snapshot_id: UUID, db=Depends(get_db)) -> EvidenceSnapshotResponse:
+async def get_evidence_snapshot(
+    snapshot_id: UUID,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> EvidenceSnapshotResponse:
     """
     Get a specific evidence snapshot by ID.
 
@@ -153,9 +158,12 @@ async def get_evidence_snapshot(snapshot_id: UUID, db=Depends(get_db)) -> Eviden
     Requirements: 3.3, 3.6
     """
     row = await db.fetchrow(
-        "SELECT id, run_id, host_id, evidence_type, collected_at, data, quality_score "
-        "FROM evidence_snapshots WHERE id = $1",
+        "SELECT e.id, e.run_id, e.host_id, e.evidence_type, e.collected_at, e.data, "
+        "e.quality_score "
+        "FROM evidence_snapshots e JOIN hosts h ON h.id = e.host_id "
+        "WHERE e.id = $1 AND h.organization_id = $2",
         snapshot_id,
+        principal.organization_id,
     )
 
     if row is None:
@@ -177,7 +185,11 @@ async def get_evidence_snapshot(snapshot_id: UUID, db=Depends(get_db)) -> Eviden
 
 
 @router.get("/{run_id}", response_model=EvidenceListResponse)
-async def list_evidence_by_run(run_id: UUID, db=Depends(get_db)) -> EvidenceListResponse:
+async def list_evidence_by_run(
+    run_id: UUID,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> EvidenceListResponse:
     """
     List all evidence snapshots collected during a loop run.
 
@@ -187,10 +199,13 @@ async def list_evidence_by_run(run_id: UUID, db=Depends(get_db)) -> EvidenceList
     Requirements: 3.1, 3.2, 3.5
     """
     rows = await db.fetch(
-        "SELECT id, run_id, host_id, evidence_type, collected_at, data, quality_score "
-        "FROM evidence_snapshots WHERE run_id = $1 "
+        "SELECT e.id, e.run_id, e.host_id, e.evidence_type, e.collected_at, e.data, "
+        "e.quality_score "
+        "FROM evidence_snapshots e JOIN loop_runs r ON r.id = e.run_id "
+        "WHERE e.run_id = $1 AND r.organization_id = $2 "
         "ORDER BY collected_at ASC",
         run_id,
+        principal.organization_id,
     )
 
     if not rows:

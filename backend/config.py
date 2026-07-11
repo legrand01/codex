@@ -4,23 +4,29 @@ Application configuration using Pydantic Settings.
 
 from typing import List
 
-from pydantic import ConfigDict
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = ConfigDict(
+    model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # Application
     app_name: str = "Autonomous Postgres DBA Agent Platform"
+    environment: str = "development"
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 8000
+
+    # Identity boundary
+    auth_required: bool = True
+    agent_auth_required: bool = True
+    bootstrap_admin_token: str = ""
 
     # Database
     database_url: str = "postgresql://postgres:postgres@localhost:5432/dba_agent"
@@ -40,6 +46,17 @@ class Settings(BaseSettings):
     risk_threshold: int = 70
     dry_run_timeout_sec: int = 30
     approval_timeout_hours: int = 24
+
+    # Production write interlocks. Both the global switch and the per-host
+    # switch must be enabled before the control plane can mutate a target.
+    write_execution_enabled: bool = False
+    production_write_enabled: bool = False
+    production_write_confirmation: str = ""
+    require_live_target_dry_run: bool = True
+    require_live_target_rollback: bool = True
+    target_connect_timeout_sec: int = 10
+    target_command_timeout_sec: int = 30
+    target_verify_timeout_sec: int = 10
 
     # Loop Worker defaults
     max_iterations: int = 10

@@ -24,6 +24,16 @@ import type {
 } from './types';
 
 const BASE_URL = '/api/v1';
+const TOKEN_KEY = 'dbtune_api_token';
+
+export function getApiToken(): string {
+  return sessionStorage.getItem(TOKEN_KEY) ?? '';
+}
+
+export function setApiToken(token: string): void {
+  if (token) sessionStorage.setItem(TOKEN_KEY, token);
+  else sessionStorage.removeItem(TOKEN_KEY);
+}
 
 class ApiError extends Error {
   constructor(
@@ -40,12 +50,14 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const url = `${BASE_URL}${path}`;
+  const token = getApiToken();
   const response = await fetch(url, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
-    ...options,
   });
 
   if (!response.ok) {
@@ -128,13 +140,13 @@ export const plansApi = {
   approvePlan(planId: string): Promise<{ message: string; status: string }> {
     return request<{ message: string; status: string }>(`/plans/${planId}/approve`, {
       method: 'POST',
-      body: JSON.stringify({ approved_by: 'demo_dba@example.com' }),
+      body: JSON.stringify({}),
     });
   },
   rejectPlan(planId: string, reason: string): Promise<{ message: string }> {
     return request<{ message: string }>(`/plans/${planId}/reject`, {
       method: 'POST',
-      body: JSON.stringify({ rejected_by: 'demo_dba@example.com', reason }),
+      body: JSON.stringify({ reason }),
     });
   },
 };

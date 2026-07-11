@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 from uuid import UUID
 
+from backend.config import settings
 from backend.db.pool import get_pool
 from backend.models.plans import RiskScore
 from backend.services.audit_logger import AuditLogger, get_audit_logger
@@ -455,6 +456,7 @@ class DryRunResult:
     passed: bool
     errors: List[str] = field(default_factory=list)
     execution_time_seconds: float = 0.0
+    pre_change_snapshot: Dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass
@@ -539,6 +541,7 @@ async def execute_dry_run(
     timeout: int = 30,
     pool=None,
     audit_logger: Optional[AuditLogger] = None,
+    target_executor=None,
 ) -> DryRunResult:
     """
     Execute a dry-run of proposed changes on the target host.
@@ -573,6 +576,58 @@ async def execute_dry_run(
 
     start_time = time.monotonic()
     errors: List[str] = []
+
+    # Production defaults to validating values against the actual target in a
+    # transaction.  The metadata-only branch below remains solely for legacy
+    # unit-test fixtures and must be opted into explicitly.
+    if settings.require_live_target_dry_run:
+        if target_executor is None:
+            from backend.services.target_executor import TargetPostgresExecutor
+
+            target_executor = TargetPostgresExecutor(pool)
+        try:
+            live_result = await asyncio.wait_for(
+                target_executor.dry_run(host_id, proposed_changes),
+                timeout=timeout,
+            )
+            elapsed = time.monotonic() - start_time
+            result = DryRunResult(
+                passed=live_result.passed,
+                errors=live_result.errors,
+                execution_time_seconds=elapsed,
+                pre_change_snapshot=live_result.snapshot,
+            )
+        except asyncio.TimeoutError:
+            elapsed = time.monotonic() - start_time
+            result = DryRunResult(
+                passed=False,
+                errors=[f"Live target dry-run timed out after {timeout} seconds"],
+                execution_time_seconds=elapsed,
+            )
+        except Exception as exc:
+            elapsed = time.monotonic() - start_time
+            result = DryRunResult(
+                passed=False,
+                errors=[f"Live target dry-run failed: {exc}"],
+                execution_time_seconds=elapsed,
+            )
+
+        await audit_logger.log(
+            actor_type="system",
+            actor_name="guardrail_engine",
+            action_type="live_target_dry_run",
+            target_host_id=host_id,
+            result="success" if result.passed else "failure",
+            result_reason="; ".join(result.errors) if result.errors else "Live dry-run passed",
+            details={
+                "host_id": str(host_id),
+                "passed": result.passed,
+                "errors": result.errors,
+                "execution_time_seconds": result.execution_time_seconds,
+                "settings_checked": [c.get("setting_name", "") for c in proposed_changes],
+            },
+        )
+        return result
 
     try:
         # Wrap the dry-run logic in a timeout

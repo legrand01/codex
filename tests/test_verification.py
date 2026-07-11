@@ -513,8 +513,8 @@ class TestVerifyAndDecide:
         assert result["triggering_delta"] == pytest.approx(-50.0)
 
     @pytest.mark.asyncio
-    async def test_empty_pre_evidence_no_comparison(self):
-        """With empty pre-evidence and post-evidence, all kept (nothing to compare)."""
+    async def test_empty_pre_evidence_fails_closed(self):
+        """Missing comparison evidence triggers rollback rather than an unsafe keep."""
         run_id = uuid4()
         host_id = uuid4()
         plan_id = uuid4()
@@ -524,10 +524,16 @@ class TestVerifyAndDecide:
         pre_evidence = {}
         post_evidence = {}
 
-        with patch(
-            "backend.services.verification.collect_verification_evidence",
-            new_callable=AsyncMock,
-            return_value=post_evidence,
+        with (
+            patch(
+                "backend.services.verification.collect_verification_evidence",
+                new_callable=AsyncMock,
+                return_value=post_evidence,
+            ),
+            patch(
+                "backend.services.verification._initiate_rollback",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await verify_and_decide(
                 run_id=run_id,
@@ -539,7 +545,7 @@ class TestVerifyAndDecide:
                 audit_logger=audit_logger,
             )
 
-        assert result["decision"] == "kept"
+        assert result["decision"] == "rolled_back"
         assert result["deltas"] == {}
 
     @pytest.mark.asyncio

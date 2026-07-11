@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import asyncpg
 import httpx
+from buffer import CircuitBreaker, EvidenceBuffer
 from collectors.locks_collector import collect_locks
 from collectors.os_metrics_collector import collect_os_metrics
 from collectors.pg_settings_collector import collect_pg_settings
@@ -58,6 +59,12 @@ class HostAgent:
         self._running = False
         self._tasks: List[asyncio.Task] = []
         self._http_client: Optional[httpx.AsyncClient] = None
+        self._evidence_buffer = EvidenceBuffer(
+            buffer_dir=config.buffer_dir,
+            max_size_bytes=config.buffer_max_bytes,
+        )
+        self._evidence_circuit = CircuitBreaker()
+        self._flush_lock = asyncio.Lock()
 
         # Role/version state
         self.pg_version: Optional[str] = None
@@ -72,12 +79,16 @@ class HostAgent:
         """
         if self.config.host_id:
             return
+        if self.config.agent_auth_required:
+            raise RuntimeError("Authenticated agents must be provisioned with AGENT_HOST_ID")
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(timeout=30.0)
 
         hostname = self.config.hostname
         register_url = f"{self.config.control_plane_url}/api/v1/fleet/"
-        response = await self._http_client.post(register_url, json={"hostname": hostname})
+        response = await self._http_client.post(
+            register_url, json={"hostname": hostname}, headers=self._agent_headers()
+        )
 
         if response.status_code == 201:
             self.config.host_id = response.json()["id"]
@@ -85,7 +96,9 @@ class HostAgent:
             return
 
         if response.status_code == 409:
-            list_response = await self._http_client.get(register_url)
+            list_response = await self._http_client.get(
+                register_url, headers=self._agent_headers()
+            )
             list_response.raise_for_status()
             for host in list_response.json().get("hosts", []):
                 if host.get("hostname") == hostname:
@@ -268,7 +281,9 @@ class HostAgent:
         }
 
         try:
-            response = await self._http_client.post(url, json=payload)
+            response = await self._http_client.post(
+                url, json=payload, headers=self._agent_headers()
+            )
             if response.status_code >= 400:
                 logger.warning(f"Heartbeat returned status {response.status_code}: {response.text}")
         except httpx.RequestError as e:
@@ -335,7 +350,7 @@ class HostAgent:
         }
 
         try:
-            await self._http_client.post(url, json=payload)
+            await self._http_client.post(url, json=payload, headers=self._agent_headers())
         except httpx.RequestError as e:
             logger.error(f"Failed to report role/version: {e}")
 
@@ -346,18 +361,50 @@ class HostAgent:
         Args:
             snapshot: The evidence snapshot dict to submit.
         """
-        if self._http_client is None:
+        if self._http_client is None or not self._evidence_circuit.should_attempt():
+            self._evidence_buffer.add(snapshot)
             return
 
-        url = f"{self.config.control_plane_url}/api/v1/fleet/{self.config.host_id}/evidence"
+        if await self._send_evidence_once(snapshot):
+            self._evidence_circuit.record_success()
+            await self._flush_evidence_buffer()
+        else:
+            self._evidence_circuit.record_failure()
+            self._evidence_buffer.add(snapshot)
 
+    async def _send_evidence_once(self, snapshot: Dict[str, Any]) -> bool:
+        if self._http_client is None:
+            return False
+        url = f"{self.config.control_plane_url}/api/v1/fleet/{self.config.host_id}/evidence"
         try:
-            response = await self._http_client.post(url, json=snapshot)
-            if response.status_code >= 400:
-                logger.warning(f"Evidence submission returned status {response.status_code}")
-        except httpx.RequestError as e:
-            logger.error(f"Evidence submission failed: {e}")
-            # Buffer will be handled by buffer module (task 5.2)
+            response = await self._http_client.post(
+                url, json=snapshot, headers=self._agent_headers()
+            )
+            if 200 <= response.status_code < 300:
+                return True
+            logger.warning("Evidence submission returned status %s", response.status_code)
+        except httpx.RequestError as exc:
+            logger.error("Evidence submission failed: %s", exc)
+        return False
+
+    async def _flush_evidence_buffer(self) -> None:
+        """Flush persisted evidence in order, preserving unsent entries on failure."""
+        if self._evidence_buffer.current_count == 0 or self._flush_lock.locked():
+            return
+        async with self._flush_lock:
+            buffered = self._evidence_buffer.flush()
+            for index, entry in enumerate(buffered):
+                if await self._send_evidence_once(entry):
+                    continue
+                for unsent in buffered[index:]:
+                    self._evidence_buffer.add(unsent)
+                self._evidence_circuit.record_failure()
+                return
+
+    def _agent_headers(self) -> Dict[str, str]:
+        if not self.config.agent_token:
+            return {}
+        return {"X-Agent-Token": self.config.agent_token}
 
 
 if __name__ == "__main__":

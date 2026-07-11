@@ -22,6 +22,13 @@ def _env_str(key: str, default: str) -> str:
     return os.environ.get(key, default)
 
 
+def _env_bool(key: str, default: bool) -> bool:
+    value = os.environ.get(key)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Interval range constraints per evidence type
 INTERVAL_RANGES = {
     "pg_settings": (10, 3600),
@@ -62,6 +69,8 @@ class AgentConfig:
     hostname: str = ""
     control_plane_url: str = "http://localhost:8000"
     pg_connection_string: str = ""
+    agent_token: str = ""
+    agent_auth_required: bool = False
 
     # Collection intervals (seconds)
     pg_settings_interval: int = 60
@@ -72,6 +81,7 @@ class AgentConfig:
     # Limits
     max_query_entries: int = 100
     buffer_max_bytes: int = 512 * 1024 * 1024  # 512 MB
+    buffer_dir: str = "/tmp/host-agent-buffer"
     heartbeat_interval: int = 30
 
     @classmethod
@@ -82,12 +92,15 @@ class AgentConfig:
             hostname=_env_str("AGENT_HOSTNAME", _env_str("HOSTNAME", "")),
             control_plane_url=_env_str("CONTROL_PLANE_URL", "http://localhost:8000"),
             pg_connection_string=_env_str("PG_CONNECTION_STRING", ""),
+            agent_token=_env_str("AGENT_TOKEN", ""),
+            agent_auth_required=_env_bool("AGENT_AUTH_REQUIRED", True),
             pg_settings_interval=_env_int("PG_SETTINGS_INTERVAL", 60),
             pg_stats_interval=_env_int("PG_STATS_INTERVAL", 30),
             locks_replication_interval=_env_int("LOCKS_REPLICATION_INTERVAL", 15),
             os_metrics_interval=_env_int("OS_METRICS_INTERVAL", 15),
             max_query_entries=_env_int("MAX_QUERY_ENTRIES", 100),
             buffer_max_bytes=_env_int("BUFFER_MAX_BYTES", 512 * 1024 * 1024),
+            buffer_dir=_env_str("BUFFER_DIR", "/tmp/host-agent-buffer"),
             heartbeat_interval=_env_int("HEARTBEAT_INTERVAL", 30),
         )
         config.validate()
@@ -105,6 +118,14 @@ class AgentConfig:
 
         if not self.pg_connection_string:
             raise ConfigValidationError("pg_connection_string must be a non-empty string")
+        if self.agent_auth_required and not self.agent_token:
+            raise ConfigValidationError(
+                "agent_token is required when agent authentication is enabled"
+            )
+        if self.agent_auth_required and not self.host_id:
+            raise ConfigValidationError(
+                "host_id must be provisioned when agent authentication is enabled"
+            )
 
         min_val, max_val = INTERVAL_RANGES["pg_settings"]
         if not (min_val <= self.pg_settings_interval <= max_val):

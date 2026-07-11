@@ -12,6 +12,7 @@ Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
 
 import json
 import logging
+import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -22,6 +23,7 @@ from pydantic import BaseModel, Field
 from backend.dependencies import get_db
 from backend.models.enums import HealthStatus
 from backend.models.hosts import HostSummary
+from backend.security import Principal, hash_token, require_agent, require_roles
 from backend.services.demo_mode import is_demo_active, is_synthetic_address
 from backend.services.fleet_service import (
     check_health_thresholds,
@@ -103,6 +105,17 @@ class EvidenceIngestResponse(BaseModel):
     total: int
 
 
+class AgentTokenResponse(BaseModel):
+    host_id: UUID
+    agent_token: str
+
+
+class ExecutionPolicyUpdate(BaseModel):
+    environment: str = Field(..., pattern="^(development|staging|production)$")
+    target_dsn_env: str = Field(..., min_length=1, max_length=255, pattern="^[A-Z][A-Z0-9_]+$")
+    writes_enabled: bool = False
+
+
 ALLOWED_EVIDENCE_TYPES = {
     "pg_settings",
     "pg_stat_database",
@@ -118,7 +131,10 @@ ALLOWED_EVIDENCE_TYPES = {
 
 
 @router.get("/", response_model=FleetListResponse)
-async def list_hosts(db=Depends(get_db)) -> FleetListResponse:
+async def list_hosts(
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> FleetListResponse:
     """
     List all registered PostgreSQL hosts with their current status.
 
@@ -132,7 +148,8 @@ async def list_hosts(db=Depends(get_db)) -> FleetListResponse:
     rows = await db.fetch(
         "SELECT id, hostname, health_status, connection_status, "
         "pg_version, server_role, last_heartbeat "
-        "FROM hosts ORDER BY hostname"
+        "FROM hosts WHERE organization_id = $1 ORDER BY hostname",
+        principal.organization_id,
     )
 
     hosts = []
@@ -158,7 +175,11 @@ async def list_hosts(db=Depends(get_db)) -> FleetListResponse:
 
 
 @router.get("/{host_id}", response_model=HostSummary)
-async def get_host(host_id: UUID, db=Depends(get_db)) -> HostSummary:
+async def get_host(
+    host_id: UUID,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> HostSummary:
     """
     Get details for a specific host.
 
@@ -169,8 +190,9 @@ async def get_host(host_id: UUID, db=Depends(get_db)) -> HostSummary:
     row = await db.fetchrow(
         "SELECT id, hostname, health_status, connection_status, "
         "pg_version, server_role, last_heartbeat "
-        "FROM hosts WHERE id = $1",
+        "FROM hosts WHERE id = $1 AND organization_id = $2",
         host_id,
+        principal.organization_id,
     )
 
     if row is None:
@@ -193,7 +215,11 @@ async def get_host(host_id: UUID, db=Depends(get_db)) -> HostSummary:
 
 
 @router.post("/", response_model=HostSummary, status_code=201)
-async def register_host(registration: HostRegistration, db=Depends(get_db)) -> HostSummary:
+async def register_host(
+    registration: HostRegistration,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("operator", "admin")),
+) -> HostSummary:
     """
     Register a new PostgreSQL host in the fleet.
 
@@ -204,7 +230,11 @@ async def register_host(registration: HostRegistration, db=Depends(get_db)) -> H
     Requirements: 1.1, 1.4
     """
     # Check for duplicate hostname
-    existing = await db.fetchrow("SELECT id FROM hosts WHERE hostname = $1", registration.hostname)
+    existing = await db.fetchrow(
+        "SELECT id FROM hosts WHERE organization_id = $1 AND hostname = $2",
+        principal.organization_id,
+        registration.hostname,
+    )
     if existing:
         raise HTTPException(
             status_code=409,
@@ -212,9 +242,10 @@ async def register_host(registration: HostRegistration, db=Depends(get_db)) -> H
         )
 
     row = await db.fetchrow(
-        "INSERT INTO hosts (hostname, pg_version, server_role) "
-        "VALUES ($1, $2, $3) RETURNING id, hostname, health_status, "
+        "INSERT INTO hosts (organization_id, hostname, pg_version, server_role) "
+        "VALUES ($1, $2, $3, $4) RETURNING id, hostname, health_status, "
         "connection_status, pg_version, server_role, last_heartbeat",
+        principal.organization_id,
         registration.hostname,
         registration.pg_version,
         registration.server_role,
@@ -235,7 +266,11 @@ async def register_host(registration: HostRegistration, db=Depends(get_db)) -> H
 
 
 @router.post("/{host_id}/heartbeat")
-async def receive_heartbeat(host_id: UUID, heartbeat: HeartbeatRequest):
+async def receive_heartbeat(
+    host_id: UUID,
+    heartbeat: HeartbeatRequest,
+    _agent_id: UUID = Depends(require_agent),
+):
     """
     Receive a heartbeat from a host agent.
 
@@ -284,6 +319,7 @@ async def receive_role_report(
     host_id: UUID,
     report: RoleReportRequest,
     db=Depends(get_db),
+    _agent_id: UUID = Depends(require_agent),
 ) -> HostSummary:
     """
     Receive role/version reports from a host agent.
@@ -378,6 +414,7 @@ async def receive_evidence(
     host_id: UUID,
     snapshot: EvidenceIngestRequest,
     db=Depends(get_db),
+    _agent_id: UUID = Depends(require_agent),
 ) -> EvidenceIngestResponse:
     """
     Receive evidence snapshots from host agents.
@@ -423,4 +460,62 @@ async def receive_evidence(
         inserted_snapshot_ids=inserted_snapshot_ids,
         evidence_types=evidence_types,
         total=len(inserted_snapshot_ids),
+    )
+
+
+@router.post("/{host_id}/agent-token", response_model=AgentTokenResponse)
+async def rotate_agent_token(
+    host_id: UUID,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("admin")),
+) -> AgentTokenResponse:
+    token = secrets.token_urlsafe(32)
+    updated = await db.fetchval(
+        """
+        UPDATE hosts
+        SET agent_token_hash = $3, updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2
+        RETURNING id
+        """,
+        host_id,
+        principal.organization_id,
+        hash_token(token),
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"Host with id '{host_id}' not found")
+    return AgentTokenResponse(host_id=host_id, agent_token=token)
+
+
+@router.put("/{host_id}/execution-policy", response_model=HostSummary)
+async def update_execution_policy(
+    host_id: UUID,
+    policy: ExecutionPolicyUpdate,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("admin")),
+) -> HostSummary:
+    row = await db.fetchrow(
+        """
+        UPDATE hosts
+        SET environment = $3, target_dsn_env = $4, writes_enabled = $5,
+            updated_at = NOW()
+        WHERE id = $1 AND organization_id = $2
+        RETURNING id, hostname, health_status, connection_status,
+                  pg_version, server_role, last_heartbeat
+        """,
+        host_id,
+        principal.organization_id,
+        policy.environment,
+        policy.target_dsn_env,
+        policy.writes_enabled,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Host with id '{host_id}' not found")
+    return HostSummary(
+        id=row["id"],
+        hostname=row["hostname"],
+        health_status=HealthStatus(row["health_status"]),
+        connection_status=classify_connection_status(row["last_heartbeat"]),
+        pg_version=row["pg_version"],
+        server_role=row["server_role"],
+        last_heartbeat=row["last_heartbeat"],
     )

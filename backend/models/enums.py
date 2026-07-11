@@ -49,6 +49,7 @@ class PlanStatus(str, Enum):
     DRY_RUN_PASSED = "dry_run_passed"
     DRY_RUN_FAILED = "dry_run_failed"
     APPLIED = "applied"
+    APPLY_FAILED = "apply_failed"
     ROLLED_BACK = "rolled_back"
     ROLLBACK_FAILED = "rollback_failed"
     BLOCKED = "blocked"

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { getApiToken } from '../api/client';
 
 interface UseWebSocketOptions {
   url: string;
@@ -33,7 +34,17 @@ export function useWebSocket({
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}${url}`;
 
-    const ws = new WebSocket(wsUrl);
+    const token = getApiToken();
+    const encodedToken = token
+      ? btoa(unescape(encodeURIComponent(token)))
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '')
+      : '';
+    const ws = new WebSocket(
+      wsUrl,
+      encodedToken ? ['dbtune-auth', `bearer.${encodedToken}`] : undefined,
+    );
     wsRef.current = ws;
 
     ws.onopen = () => {

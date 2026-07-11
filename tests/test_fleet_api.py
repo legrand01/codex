@@ -141,6 +141,12 @@ class MockConnection:
                 if r["id"] == target_id:
                     return r
             return None
+        if "hostname = $2" in query and len(args) >= 2:
+            target = args[1]
+            for r in self.records:
+                if r["hostname"] == target:
+                    return r
+            return None
         if "WHERE hostname = $1" in query and args:
             target = args[0]
             for r in self.records:

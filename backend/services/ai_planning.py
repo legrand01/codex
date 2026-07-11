@@ -41,6 +41,10 @@ DEFAULT_QUALITY_THRESHOLD = 0.6
 # Maximum age in seconds before evidence is considered stale
 MAX_EVIDENCE_AGE_SECONDS = 600  # 10 minutes
 
+# Stored with every plan so approvals and incident reviews remain reproducible.
+PLANNING_POLICY_VERSION = "deterministic-postgres-policy-v1"
+PLANNER_KIND = "deterministic"
+
 
 @dataclass
 class EvidenceQualityReport:

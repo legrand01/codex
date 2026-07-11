@@ -14,10 +14,11 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from backend.db.pool import get_pool
+from backend.security import Principal, require_roles
 from backend.services.audit_logger import get_audit_logger
 from backend.services.report_generator import (
     ReportGenerationError,
@@ -81,6 +82,7 @@ async def search_reports(
     ),
     limit: int = Query(default=50, ge=1, le=200, description="Max results to return"),
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
 ) -> ReportSearchResponse:
     """
     Search DBA reports by date range, host identifier, and goal keywords.
@@ -96,22 +98,22 @@ async def search_reports(
 
     try:
         # Build dynamic query
-        conditions = []
-        params = []
-        param_idx = 1
+        conditions = ["r.organization_id = $1"]
+        params = [principal.organization_id]
+        param_idx = 2
 
         if start_date is not None:
-            conditions.append(f"generated_at >= ${param_idx}")
+            conditions.append(f"d.generated_at >= ${param_idx}")
             params.append(start_date)
             param_idx += 1
 
         if end_date is not None:
-            conditions.append(f"generated_at <= ${param_idx}")
+            conditions.append(f"d.generated_at <= ${param_idx}")
             params.append(end_date)
             param_idx += 1
 
         if host_id is not None:
-            conditions.append(f"host_id = ${param_idx}")
+            conditions.append(f"d.host_id = ${param_idx}")
             params.append(host_id)
             param_idx += 1
 
@@ -120,14 +122,14 @@ async def search_reports(
             keyword_list = keywords.strip().split()
             keyword_conditions = []
             for keyword in keyword_list:
-                keyword_conditions.append(f"goal ILIKE ${param_idx}")
+                keyword_conditions.append(f"d.goal ILIKE ${param_idx}")
                 params.append(f"%{keyword}%")
                 param_idx += 1
             # All keywords must match (AND logic)
             conditions.append(f"({' AND '.join(keyword_conditions)})")
 
         # Only return non-expired reports (retention >= 90 days)
-        conditions.append(f"(expires_at IS NULL OR expires_at > ${param_idx})")
+        conditions.append(f"(d.expires_at IS NULL OR d.expires_at > ${param_idx})")
         params.append(datetime.now(timezone.utc))
         param_idx += 1
 
@@ -136,7 +138,10 @@ async def search_reports(
             where_clause = "WHERE " + " AND ".join(conditions)
 
         # Count query
-        count_query = f"SELECT COUNT(*) FROM dba_reports {where_clause}"
+        count_query = (
+            "SELECT COUNT(*) FROM dba_reports d "
+            "JOIN loop_runs r ON r.id = d.run_id " + where_clause
+        )
         async with pool.acquire() as conn:
             total = await conn.fetchval(count_query, *params)
 
@@ -149,8 +154,10 @@ async def search_reports(
         offset_ph = f"${param_idx}"
 
         data_query = f"""
-            SELECT id, run_id, goal, host_id, outcome_status, generated_at, expires_at
-            FROM dba_reports
+            SELECT d.id, d.run_id, d.goal, d.host_id, d.outcome_status,
+                   d.generated_at, d.expires_at
+            FROM dba_reports d
+            JOIN loop_runs r ON r.id = d.run_id
             {where_clause}
             ORDER BY generated_at DESC
             LIMIT {limit_ph} OFFSET {offset_ph}
@@ -180,7 +187,10 @@ async def search_reports(
 
 
 @router.get("/{run_id}", response_model=ReportResponse)
-async def get_report(run_id: UUID) -> ReportResponse:
+async def get_report(
+    run_id: UUID,
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> ReportResponse:
     """
     Get or generate a DBA report for a specific run.
 
@@ -203,10 +213,12 @@ async def get_report(run_id: UUID) -> ReportResponse:
                 """
                 SELECT id, run_id, goal, host_id, outcome_status,
                        report_content, generated_at, expires_at
-                FROM dba_reports
-                WHERE run_id = $1
+                FROM dba_reports d
+                JOIN loop_runs r ON r.id = d.run_id
+                WHERE d.run_id = $1 AND r.organization_id = $2
                 """,
                 run_id,
+                principal.organization_id,
             )
 
         if row is not None:
@@ -229,6 +241,16 @@ async def get_report(run_id: UUID) -> ReportResponse:
                 generated_at=row["generated_at"],
                 expires_at=row["expires_at"],
             )
+
+        # A missing report must not become a cross-tenant run existence oracle.
+        async with pool.acquire() as conn:
+            owned_run = await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM loop_runs WHERE id = $1 AND organization_id = $2)",
+                run_id,
+                principal.organization_id,
+            )
+        if not owned_run:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
         # No existing report - attempt to generate one
         try:

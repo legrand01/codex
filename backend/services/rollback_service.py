@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Dict, List, Optional
 from uuid import UUID
 
+from backend.config import settings
 from backend.models.enums import PlanStatus
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,11 @@ async def execute_rollback(
     plan_id: UUID,
     rollback_instructions: List[dict],
     timeout: int = ROLLBACK_TIMEOUT_SECONDS,
+    *,
+    host_id: Optional[UUID] = None,
+    pre_change_snapshot: Optional[dict] = None,
+    control_pool=None,
+    target_executor=None,
 ) -> RollbackResult:
     """
     Execute rollback instructions for a plan.
@@ -183,6 +189,35 @@ async def execute_rollback(
         RollbackTimeoutError: If rollback exceeds the timeout.
     """
     started_at = datetime.now(timezone.utc)
+
+    if settings.require_live_target_rollback or target_executor is not None:
+        if host_id is None:
+            raise RollbackInstructionsError("Live rollback requires a target host_id")
+        if not pre_change_snapshot:
+            raise RollbackInstructionsError("Live rollback requires a pre-change snapshot")
+        if target_executor is None:
+            if control_pool is None:
+                raise RollbackInstructionsError("Live rollback requires the control-plane pool")
+            from backend.services.target_executor import TargetPostgresExecutor
+
+            target_executor = TargetPostgresExecutor(control_pool)
+        try:
+            execution = await asyncio.wait_for(
+                target_executor.rollback(host_id, pre_change_snapshot),
+                timeout=timeout,
+            )
+            if not execution.succeeded or not execution.rolled_back:
+                raise RollbackError("Target executor did not verify rollback completion")
+            return RollbackResult(
+                plan_id=plan_id,
+                status=RollbackStatus.COMPLETED,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc),
+            )
+        except asyncio.TimeoutError as exc:
+            raise RollbackTimeoutError(
+                f"Rollback for plan {plan_id} exceeded {timeout} second timeout."
+            ) from exc
 
     try:
         result = await asyncio.wait_for(

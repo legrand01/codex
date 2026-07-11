@@ -13,7 +13,7 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from backend.dependencies import get_db
 from backend.models.enums import PlanStatus
 from backend.models.plans import PlanDetail
+from backend.security import Principal, require_roles
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +52,19 @@ class PlanListResponse(BaseModel):
 class ApproveRequest(BaseModel):
     """Request model for plan approval."""
 
-    approved_by: str = Field(..., min_length=1, description="DBA identity approving the plan")
+    approved_by: Optional[str] = Field(
+        default=None,
+        description="Deprecated and ignored; identity comes from the authenticated principal",
+    )
 
 
 class RejectRequest(BaseModel):
     """Request model for plan rejection."""
 
-    rejected_by: str = Field(..., min_length=1, description="DBA identity rejecting the plan")
+    rejected_by: Optional[str] = Field(
+        default=None,
+        description="Deprecated and ignored; identity comes from the authenticated principal",
+    )
     reason: str = Field(..., description="Rejection reason (min 10 chars trimmed)")
 
 
@@ -212,6 +219,7 @@ async def list_pending_plans(
     page: int = 1,
     page_size: int = MAX_PAGE_SIZE,
     db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
 ) -> PlanListResponse:
     """
     List all plans awaiting human approval, ordered by submission time.
@@ -233,8 +241,12 @@ async def list_pending_plans(
 
     # Count total pending plans
     count_row = await db.fetchrow(
-        "SELECT COUNT(*) as total FROM plans WHERE status = $1",
+        """
+        SELECT COUNT(*) as total FROM plans
+        WHERE status = $1 AND organization_id = $2
+        """,
         PlanStatus.PENDING_APPROVAL.value,
+        principal.organization_id,
     )
     total = count_row["total"] if count_row else 0
 
@@ -245,11 +257,12 @@ async def list_pending_plans(
                risk_score, confidence_score, uncertainty_explanation,
                rollback_instructions, submission_time
         FROM plans
-        WHERE status = $1
+        WHERE status = $1 AND organization_id = $2
         ORDER BY submission_time ASC
-        LIMIT $2 OFFSET $3
+        LIMIT $3 OFFSET $4
         """,
         PlanStatus.PENDING_APPROVAL.value,
+        principal.organization_id,
         page_size,
         offset,
     )
@@ -265,7 +278,11 @@ async def list_pending_plans(
 
 
 @router.get("/{plan_id}", response_model=PlanDetail)
-async def get_plan_detail(plan_id: UUID, db=Depends(get_db)) -> PlanDetail:
+async def get_plan_detail(
+    plan_id: UUID,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> PlanDetail:
     """
     Get full details for a specific plan.
 
@@ -280,9 +297,10 @@ async def get_plan_detail(plan_id: UUID, db=Depends(get_db)) -> PlanDetail:
                risk_score, confidence_score, uncertainty_explanation,
                rollback_instructions, submission_time
         FROM plans
-        WHERE id = $1
+        WHERE id = $1 AND organization_id = $2
         """,
         plan_id,
+        principal.organization_id,
     )
 
     if row is None:
@@ -296,6 +314,7 @@ async def approve_plan(
     plan_id: UUID,
     request: ApproveRequest,
     db=Depends(get_db),
+    principal: Principal = Depends(require_roles("approver", "admin")),
 ) -> ApproveResponse:
     """
     Approve a plan for execution.
@@ -309,50 +328,35 @@ async def approve_plan(
 
     Requirements: 4.3, 4.4, 4.6
     """
-    # Fetch plan and verify it exists and is pending
-    row = await db.fetchrow(
-        """
-        SELECT id, run_id, host_id, status, proposed_changes
-        FROM plans
-        WHERE id = $1
-        """,
-        plan_id,
-    )
-
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Plan with id '{plan_id}' not found")
-
-    if row["status"] != PlanStatus.PENDING_APPROVAL.value:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Plan is not pending approval (current status: {row['status']})",
-        )
-
-    # Record approval timestamp
     approved_at = datetime.now(timezone.utc)
+    from backend.services.audit_logger import get_audit_logger
 
-    # Update plan status to approved
-    await db.execute(
-        """
-        UPDATE plans
-        SET status = $1, approved_by = $2, approved_at = $3
-        WHERE id = $4
-        """,
-        PlanStatus.APPROVED.value,
-        request.approved_by,
-        approved_at,
-        plan_id,
-    )
+    audit_logger = get_audit_logger()
+    async with db.transaction():
+        row = await db.fetchrow(
+            """
+            SELECT id, run_id, host_id, status
+            FROM plans
+            WHERE id = $1 AND organization_id = $2
+            FOR UPDATE
+            """,
+            plan_id,
+            principal.organization_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Plan with id '{plan_id}' not found")
+        if row["status"] != PlanStatus.PENDING_APPROVAL.value:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Plan is not pending approval (current status: {row['status']})",
+            )
 
-    # Record approval in Audit_Log (Requirement 4.6: no plan proceeds without approval in Audit_Log)
-    try:
-        from backend.services.audit_logger import get_audit_logger
-
-        audit_logger = get_audit_logger()
+        # Audit and state transition share one database transaction.  If the
+        # append-only audit insert fails, the approval cannot become visible.
         await audit_logger.log(
             run_id=row["run_id"],
             actor_type="human",
-            actor_name=request.approved_by,
+            actor_name=principal.subject,
             action_type="plan_approved",
             target_host_id=row["host_id"],
             result="success",
@@ -360,42 +364,39 @@ async def approve_plan(
                 "plan_id": str(plan_id),
                 "approved_at": approved_at.isoformat(),
             },
+            connection=db,
         )
-    except Exception as e:
-        logger.error(f"Failed to log approval to audit log: {e}")
-        # Approval still proceeds even if audit logging has a transient issue
-        # The plan status update already records the approval
-
-    # Forward to Guardrail Engine with retry logic (Requirement 4.3, 4.4)
-    proposed_changes = _parse_json_field(row["proposed_changes"])
-
-    # Run forwarding in background to avoid blocking the response
-    # But for synchronous behavior we attempt it inline
-    try:
-        forwarding_success = await _forward_with_retry(
-            plan_id=plan_id,
-            host_id=row["host_id"],
-            proposed_changes=proposed_changes,
-            db=db,
+        await db.execute(
+            """
+            UPDATE plans
+            SET status = $1, approved_by = $2, approved_at = $3
+            WHERE id = $4
+            """,
+            PlanStatus.APPROVED.value,
+            principal.subject,
+            approved_at,
+            plan_id,
         )
-    except Exception as e:
-        logger.error(f"Forwarding failed with unexpected error: {e}")
-        forwarding_success = False
-
-    status = PlanStatus.APPROVED.value
-    message = "Plan approved and forwarded to Guardrail Engine for dry-run"
-    if not forwarding_success:
-        # Check current status from DB
-        updated_row = await db.fetchrow("SELECT status FROM plans WHERE id = $1", plan_id)
-        status = updated_row["status"] if updated_row else PlanStatus.FORWARDING_FAILED.value
-        message = "Plan approved but forwarding to Guardrail Engine failed after retries"
+        await db.execute(
+            """
+            UPDATE run_jobs
+            SET status = 'queued', available_at = NOW(), updated_at = NOW(),
+                claimed_by = NULL, claimed_at = NULL, lease_expires_at = NULL
+            WHERE run_id = $1 AND status = 'waiting_approval'
+            """,
+            row["run_id"],
+        )
+        await db.execute(
+            "UPDATE loop_runs SET status = 'queued' WHERE id = $1",
+            row["run_id"],
+        )
 
     return ApproveResponse(
         plan_id=str(plan_id),
-        status=status,
-        approved_by=request.approved_by,
+        status=PlanStatus.APPROVED.value,
+        approved_by=principal.subject,
         approved_at=approved_at.isoformat(),
-        message=message,
+        message="Plan approved; the worker must pass a fresh live dry-run before apply",
     )
 
 
@@ -404,6 +405,7 @@ async def reject_plan(
     plan_id: UUID,
     request: RejectRequest,
     db=Depends(get_db),
+    principal: Principal = Depends(require_roles("approver", "admin")),
 ) -> RejectResponse:
     """
     Reject a plan with a reason.
@@ -423,51 +425,33 @@ async def reject_plan(
             detail="Rejection reason must be at least 10 characters (after trimming whitespace)",
         )
 
-    # Fetch plan and verify it exists and is pending
-    row = await db.fetchrow(
-        """
-        SELECT id, run_id, host_id, status
-        FROM plans
-        WHERE id = $1
-        """,
-        plan_id,
-    )
-
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Plan with id '{plan_id}' not found")
-
-    if row["status"] != PlanStatus.PENDING_APPROVAL.value:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Plan is not pending approval (current status: {row['status']})",
-        )
-
-    # Record rejection timestamp
     rejected_at = datetime.now(timezone.utc)
+    from backend.services.audit_logger import get_audit_logger
 
-    # Update plan status to rejected
-    await db.execute(
-        """
-        UPDATE plans
-        SET status = $1, rejected_by = $2, rejected_at = $3, rejection_reason = $4
-        WHERE id = $5
-        """,
-        PlanStatus.REJECTED.value,
-        request.rejected_by,
-        rejected_at,
-        trimmed_reason,
-        plan_id,
-    )
+    audit_logger = get_audit_logger()
+    async with db.transaction():
+        row = await db.fetchrow(
+            """
+            SELECT id, run_id, host_id, status
+            FROM plans
+            WHERE id = $1 AND organization_id = $2
+            FOR UPDATE
+            """,
+            plan_id,
+            principal.organization_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Plan with id '{plan_id}' not found")
+        if row["status"] != PlanStatus.PENDING_APPROVAL.value:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Plan is not pending approval (current status: {row['status']})",
+            )
 
-    # Record rejection in Audit_Log
-    try:
-        from backend.services.audit_logger import get_audit_logger
-
-        audit_logger = get_audit_logger()
         await audit_logger.log(
             run_id=row["run_id"],
             actor_type="human",
-            actor_name=request.rejected_by,
+            actor_name=principal.subject,
             action_type="plan_rejected",
             target_host_id=row["host_id"],
             result="success",
@@ -477,9 +461,38 @@ async def reject_plan(
                 "rejected_at": rejected_at.isoformat(),
                 "rejection_reason": trimmed_reason,
             },
+            connection=db,
         )
-    except Exception as e:
-        logger.error(f"Failed to log rejection to audit log: {e}")
+        await db.execute(
+            """
+            UPDATE plans
+            SET status = $1, rejected_by = $2, rejected_at = $3, rejection_reason = $4
+            WHERE id = $5
+            """,
+            PlanStatus.REJECTED.value,
+            principal.subject,
+            rejected_at,
+            trimmed_reason,
+            plan_id,
+        )
+        await db.execute(
+            """
+            UPDATE run_jobs
+            SET status = 'failed', last_error = $2, completed_at = NOW(), updated_at = NOW()
+            WHERE run_id = $1 AND status IN ('waiting_approval', 'queued')
+            """,
+            row["run_id"],
+            trimmed_reason,
+        )
+        await db.execute(
+            """
+            UPDATE loop_runs
+            SET status = 'failed', failure_reason = $2, completed_at = NOW()
+            WHERE id = $1
+            """,
+            row["run_id"],
+            f"Plan rejected: {trimmed_reason}",
+        )
 
     # Notify DBA_Loop_Worker to re-plan with rejection feedback
     # This is done by publishing to Redis or updating the loop run state
@@ -498,7 +511,7 @@ async def reject_plan(
                         "run_id": str(row["run_id"]),
                         "host_id": str(row["host_id"]),
                         "rejection_reason": trimmed_reason,
-                        "rejected_by": request.rejected_by,
+                        "rejected_by": principal.subject,
                     }
                 ),
             )
@@ -508,7 +521,7 @@ async def reject_plan(
     return RejectResponse(
         plan_id=str(plan_id),
         status=PlanStatus.REJECTED.value,
-        rejected_by=request.rejected_by,
+        rejected_by=principal.subject,
         rejected_at=rejected_at.isoformat(),
         reason=trimmed_reason,
         message="Plan rejected. DBA Loop Worker notified to re-plan with feedback.",

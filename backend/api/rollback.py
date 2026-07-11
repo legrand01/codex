@@ -13,11 +13,13 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.config import settings
 from backend.db.pool import get_pool
 from backend.models.enums import PlanStatus
+from backend.security import Principal, require_roles
 from backend.services.audit_logger import get_audit_logger
 from backend.services.rollback_service import (
     RollbackEligibilityError,
@@ -56,7 +58,7 @@ class RollbackStatusResponse(BaseModel):
     rolled_back_at: Optional[str] = None
 
 
-async def _get_plan(plan_id: UUID) -> Optional[dict]:
+async def _get_plan(plan_id: UUID, organization_id: Optional[UUID] = None) -> Optional[dict]:
     """Fetch a plan from the database by ID."""
     pool = get_pool()
     if pool is None:
@@ -66,11 +68,13 @@ async def _get_plan(plan_id: UUID) -> Optional[dict]:
         row = await conn.fetchrow(
             """
             SELECT id, run_id, host_id, status, rollback_instructions,
-                   applied_at, rolled_back_at
+                   pre_change_snapshot, applied_at, rolled_back_at
             FROM plans
             WHERE id = $1
+              AND ($2::uuid IS NULL OR organization_id = $2)
             """,
             plan_id,
+            organization_id,
         )
     if row is None:
         return None
@@ -106,7 +110,10 @@ async def _update_plan_status(plan_id: UUID, new_status: PlanStatus) -> None:
 
 
 @router.post("/{plan_id}", response_model=RollbackResponse)
-async def initiate_rollback(plan_id: UUID) -> RollbackResponse:
+async def initiate_rollback(
+    plan_id: UUID,
+    principal: Principal = Depends(require_roles("operator", "approver", "admin")),
+) -> RollbackResponse:
     """
     Initiate rollback for an applied plan.
 
@@ -123,7 +130,7 @@ async def initiate_rollback(plan_id: UUID) -> RollbackResponse:
     audit_logger = get_audit_logger()
 
     # Fetch the plan
-    plan = await _get_plan(plan_id)
+    plan = await _get_plan(plan_id, principal.organization_id)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found.")
 
@@ -136,7 +143,7 @@ async def initiate_rollback(plan_id: UUID) -> RollbackResponse:
     except RollbackEligibilityError as e:
         # Log rejection in audit log
         await audit_logger.log(
-            run_id=None,
+            run_id=plan.get("run_id"),
             actor_type="system",
             actor_name="rollback_service",
             action_type="rollback_rejected",
@@ -153,7 +160,7 @@ async def initiate_rollback(plan_id: UUID) -> RollbackResponse:
     except RollbackInstructionsError as e:
         # Alert DBA and log rejection in audit log
         await audit_logger.log(
-            run_id=None,
+            run_id=plan.get("run_id"),
             actor_type="system",
             actor_name="rollback_service",
             action_type="rollback_rejected_invalid_instructions",
@@ -166,14 +173,23 @@ async def initiate_rollback(plan_id: UUID) -> RollbackResponse:
 
     # Execute rollback (Req 5.1, 5.2)
     try:
-        result = await execute_rollback(plan_id, instructions)
+        pool = get_pool()
+        if settings.require_live_target_rollback and pool is None:
+            raise RuntimeError("Database pool not available")
+        result = await execute_rollback(
+            plan_id,
+            instructions,
+            host_id=host_id,
+            pre_change_snapshot=plan.get("pre_change_snapshot"),
+            control_pool=pool,
+        )
 
         # Success: update plan status to "rolled_back" (Req 5.6)
         await _update_plan_status(plan_id, PlanStatus.ROLLED_BACK)
 
         # Record success in Audit_Log (Req 5.6)
         await audit_logger.log(
-            run_id=None,
+            run_id=plan.get("run_id"),
             actor_type="system",
             actor_name="rollback_service",
             action_type="rollback_completed",
@@ -200,7 +216,7 @@ async def initiate_rollback(plan_id: UUID) -> RollbackResponse:
         await _update_plan_status(plan_id, PlanStatus.ROLLBACK_FAILED)
 
         await audit_logger.log(
-            run_id=None,
+            run_id=plan.get("run_id"),
             actor_type="system",
             actor_name="rollback_service",
             action_type="rollback_failed",
@@ -222,7 +238,7 @@ async def initiate_rollback(plan_id: UUID) -> RollbackResponse:
         await _update_plan_status(plan_id, PlanStatus.ROLLBACK_FAILED)
 
         await audit_logger.log(
-            run_id=None,
+            run_id=plan.get("run_id"),
             actor_type="system",
             actor_name="rollback_service",
             action_type="rollback_failed",
@@ -241,7 +257,10 @@ async def initiate_rollback(plan_id: UUID) -> RollbackResponse:
 
 
 @router.get("/{plan_id}/status", response_model=RollbackStatusResponse)
-async def get_rollback_status(plan_id: UUID) -> RollbackStatusResponse:
+async def get_rollback_status(
+    plan_id: UUID,
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> RollbackStatusResponse:
     """
     Get the rollback status for a plan.
 
@@ -250,7 +269,7 @@ async def get_rollback_status(plan_id: UUID) -> RollbackStatusResponse:
 
     Requirements: 5.2
     """
-    plan = await _get_plan(plan_id)
+    plan = await _get_plan(plan_id, principal.organization_id)
     if plan is None:
         raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found.")
 

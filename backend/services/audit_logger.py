@@ -109,6 +109,8 @@ class AuditLogger:
         result: str = "success",
         result_reason: Optional[str] = None,
         details: Optional[Dict] = None,
+        connection=None,
+        organization_id: Optional[UUID] = None,
     ) -> AuditEntry:
         """
         Persist a structured audit entry to the append-only audit log.
@@ -141,14 +143,22 @@ class AuditLogger:
         details_json = json.dumps(details) if details is not None else None
 
         try:
-            pool = self.pool
-            async with pool.acquire() as conn:
-                row = await conn.fetchrow(
+            if connection is not None:
+                row = await connection.fetchrow(
                     """
                     INSERT INTO audit_log (
                         run_id, timestamp, actor_type, actor_name,
-                        action_type, target_host_id, result, result_reason, details
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+                        action_type, target_host_id, result, result_reason, details,
+                        organization_id
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
+                        COALESCE(
+                            $10,
+                            (SELECT organization_id FROM hosts WHERE id = $6),
+                            (SELECT organization_id FROM loop_runs WHERE id = $1),
+                            '00000000-0000-0000-0000-000000000001'::uuid
+                        )
+                    )
                     RETURNING id, run_id, timestamp, actor_type, actor_name,
                               action_type, target_host_id, result, result_reason, details
                     """,
@@ -161,7 +171,40 @@ class AuditLogger:
                     result,
                     result_reason,
                     details_json,
+                    organization_id,
                 )
+            else:
+                pool = self.pool
+                async with pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        """
+                        INSERT INTO audit_log (
+                            run_id, timestamp, actor_type, actor_name,
+                            action_type, target_host_id, result, result_reason, details,
+                            organization_id
+                        ) VALUES (
+                            $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb,
+                            COALESCE(
+                                $10,
+                                (SELECT organization_id FROM hosts WHERE id = $6),
+                                (SELECT organization_id FROM loop_runs WHERE id = $1),
+                                '00000000-0000-0000-0000-000000000001'::uuid
+                            )
+                        )
+                        RETURNING id, run_id, timestamp, actor_type, actor_name,
+                                  action_type, target_host_id, result, result_reason, details
+                        """,
+                        run_id,
+                        timestamp,
+                        actor_type,
+                        actor_name,
+                        action_type,
+                        target_host_id,
+                        result,
+                        result_reason,
+                        details_json,
+                        organization_id,
+                    )
 
             # Parse the returned row into an AuditEntry
             entry = AuditEntry(
@@ -195,6 +238,7 @@ class AuditLogger:
         time_range: Optional[Tuple[datetime, datetime]] = None,
         limit: int = 100,
         offset: int = 0,
+        organization_id: Optional[UUID] = None,
     ) -> List[AuditEntry]:
         """
         Query audit log entries in chronological order.
@@ -221,6 +265,11 @@ class AuditLogger:
             conditions = []
             params = []
             param_idx = 1
+
+            if organization_id is not None:
+                conditions.append(f"organization_id = ${param_idx}")
+                params.append(organization_id)
+                param_idx += 1
 
             if run_id is not None:
                 conditions.append(f"run_id = ${param_idx}")

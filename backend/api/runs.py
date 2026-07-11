@@ -16,7 +16,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -25,6 +25,7 @@ from backend.dependencies import get_db
 from backend.models.config import LoopConfig
 from backend.models.enums import WorkflowStep
 from backend.models.runs import RunSummary
+from backend.security import Principal, require_roles
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,11 @@ class RunListResponse(BaseModel):
 
 
 @router.post("/api/v1/runs/", response_model=StartRunResponse)
-async def start_run(request: StartRunRequest, db=Depends(get_db)) -> StartRunResponse:
+async def start_run(
+    request: StartRunRequest,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("operator", "admin")),
+) -> StartRunResponse:
     """
     Start a new DBA loop run with a high-level goal.
 
@@ -99,8 +104,6 @@ async def start_run(request: StartRunRequest, db=Depends(get_db)) -> StartRunRes
 
     Requirements: 2.1
     """
-    from backend.services.loop_worker import DBALoopWorker
-
     config = LoopConfig(
         max_iterations=request.max_iterations,
         max_steps=request.max_steps,
@@ -116,31 +119,72 @@ async def start_run(request: StartRunRequest, db=Depends(get_db)) -> StartRunRes
         except ValueError:
             raise HTTPException(status_code=422, detail="Invalid host_id format")
 
-    worker = DBALoopWorker()
+    if host_id is None:
+        host = await db.fetchrow(
+            """
+            SELECT id, organization_id FROM hosts
+            WHERE organization_id = $1
+            ORDER BY created_at LIMIT 1
+            """,
+            principal.organization_id,
+        )
+    else:
+        host = await db.fetchrow(
+            "SELECT id, organization_id FROM hosts WHERE id = $1 AND organization_id = $2",
+            host_id,
+            principal.organization_id,
+        )
+    if host is None:
+        raise HTTPException(status_code=409, detail="A registered target host is required")
 
-    # Start the run in a background task
-    async def _run_in_background():
-        try:
-            await worker.start_run(goal=request.goal, config=config, host_id=host_id)
-        except Exception as e:
-            logger.error(f"Background run failed: {e}")
-
-    asyncio.create_task(_run_in_background())
-
-    # Wait briefly for the run_id to be set
-    await asyncio.sleep(0.1)
-    run_id = str(worker._run_id) if worker._run_id else "pending"
+    run_id = uuid4()
+    now = datetime.now(timezone.utc)
+    async with db.transaction():
+        await db.execute(
+            """
+            INSERT INTO loop_runs (
+                id, organization_id, host_id, goal, status, current_step,
+                current_iteration, max_iterations, max_steps,
+                approval_timeout_hours, verification_window_seconds,
+                degradation_threshold_pct, started_at, last_step_transition_at
+            ) VALUES (
+                $1, $2, $3, $4, 'queued', 'observe', 1, $5, $6, $7, $8, $9, $10, $10
+            )
+            """,
+            run_id,
+            host["organization_id"],
+            host["id"],
+            request.goal,
+            config.max_iterations,
+            config.max_steps,
+            config.approval_timeout_hours,
+            config.verification_window_seconds,
+            config.degradation_threshold_pct,
+            now,
+        )
+        await db.execute(
+            """
+            INSERT INTO run_jobs (run_id, organization_id, status)
+            VALUES ($1, $2, 'queued')
+            """,
+            run_id,
+            host["organization_id"],
+        )
 
     return StartRunResponse(
-        run_id=run_id,
-        status="running",
+        run_id=str(run_id),
+        status="queued",
         goal=request.goal,
-        message="DBA loop run started successfully",
+        message="DBA loop run queued durably",
     )
 
 
 @router.post("/api/v1/runs/{run_id}/halt", response_model=HaltRunResponse)
-async def halt_run(run_id: UUID, db=Depends(get_db)) -> HaltRunResponse:
+async def halt_run(
+    run_id: UUID,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("operator", "admin")),
+) -> HaltRunResponse:
     """
     Halt an active DBA loop run within 10 seconds.
 
@@ -149,36 +193,89 @@ async def halt_run(run_id: UUID, db=Depends(get_db)) -> HaltRunResponse:
 
     Requirements: 2.4, 2.6
     """
-    from backend.services.loop_worker import get_active_runs, get_loop_worker
-
-    active_runs = get_active_runs()
-    run_id_str = str(run_id)
-
-    # If there's an active worker for this run, use it
-    if run_id_str in active_runs:
-        worker = active_runs[run_id_str]
-        result = await worker.halt_run(run_id)
-    else:
-        # Use a new worker instance to check/halt from DB
-        worker = get_loop_worker()
-        result = await worker.halt_run(run_id)
-
-    if not result["success"]:
-        raise HTTPException(
-            status_code=409,
-            detail=result["message"],
+    async with db.transaction():
+        row = await db.fetchrow(
+            """
+            SELECT id, status, current_step
+            FROM loop_runs
+            WHERE id = $1 AND organization_id = $2
+            FOR UPDATE
+            """,
+            run_id,
+            principal.organization_id,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        if row["status"] not in {"queued", "running", "waiting_approval", "unresponsive"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Run is no longer active (current status: {row['status']})",
+            )
+        write_in_progress = await db.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM write_operations w
+                JOIN plans p ON p.id = w.plan_id
+                WHERE p.run_id = $1 AND w.status = 'in_progress'
+            )
+            """,
+            run_id,
+        )
+        if write_in_progress:
+            raise HTTPException(
+                status_code=409,
+                detail="A target write is in progress; wait for verified completion or rollback",
+            )
+        verification_required = await db.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM plans
+                WHERE run_id = $1 AND status = 'applied'
+                  AND verification_completed_at IS NULL
+            )
+            """,
+            run_id,
+        )
+        if verification_required:
+            raise HTTPException(
+                status_code=409,
+                detail="An applied change still requires verification or rollback",
+            )
+        await db.execute(
+            """
+            UPDATE run_jobs
+            SET status = CASE WHEN status = 'claimed' THEN 'cancel_requested' ELSE 'cancelled' END,
+                updated_at = NOW(),
+                completed_at = CASE WHEN status = 'claimed' THEN NULL ELSE NOW() END
+            WHERE run_id = $1 AND status IN ('queued', 'claimed', 'waiting_approval')
+            """,
+            run_id,
+        )
+        await db.execute(
+            """
+            UPDATE loop_runs
+            SET status = 'manually_halted', failure_reason = 'Run manually halted by operator',
+                completed_at = NOW(), last_step_transition_at = NOW()
+            WHERE id = $1
+            """,
+            run_id,
         )
 
     return HaltRunResponse(
-        success=result["success"],
-        message=result["message"],
-        status=result["status"],
-        previous_step=result.get("previous_step"),
+        success=True,
+        message=f"Run '{run_id}' halted successfully",
+        status="manually_halted",
+        previous_step=row["current_step"],
     )
 
 
 @router.get("/api/v1/runs/{run_id}", response_model=RunStatusResponse)
-async def get_run_status(run_id: UUID, db=Depends(get_db)) -> RunStatusResponse:
+async def get_run_status(
+    run_id: UUID,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> RunStatusResponse:
     """
     Get the current status of a DBA loop run.
 
@@ -193,9 +290,10 @@ async def get_run_status(run_id: UUID, db=Depends(get_db)) -> RunStatusResponse:
                max_iterations, started_at, last_step_transition_at,
                failure_reason
         FROM loop_runs
-        WHERE id = $1
+        WHERE id = $1 AND organization_id = $2
         """,
         run_id,
+        principal.organization_id,
     )
 
     if row is None:
@@ -236,7 +334,10 @@ async def get_run_status(run_id: UUID, db=Depends(get_db)) -> RunStatusResponse:
 
 
 @router.get("/api/v1/runs/", response_model=RunListResponse)
-async def list_active_runs(db=Depends(get_db)) -> RunListResponse:
+async def list_active_runs(
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> RunListResponse:
     """
     List all active DBA loop runs.
 
@@ -249,9 +350,11 @@ async def list_active_runs(db=Depends(get_db)) -> RunListResponse:
         SELECT id, goal, status, current_step, current_iteration,
                started_at, last_step_transition_at
         FROM loop_runs
-        WHERE status IN ('running', 'unresponsive')
+        WHERE organization_id = $1
+          AND status IN ('queued', 'running', 'waiting_approval', 'unresponsive')
         ORDER BY started_at DESC
-        """
+        """,
+        principal.organization_id,
     )
 
     now = datetime.now(timezone.utc)
@@ -294,7 +397,32 @@ async def ws_run_updates(websocket: WebSocket, run_id: str):
 
     Requirements: 2.2
     """
-    await websocket.accept()
+    from backend.db.pool import get_pool
+    from backend.security import authenticate_websocket
+
+    principal = await authenticate_websocket(websocket)
+    if principal is None:
+        await websocket.close(code=4401, reason="Authentication is required")
+        return
+    try:
+        parsed_run_id = UUID(run_id)
+    except ValueError:
+        await websocket.close(code=4400, reason="Invalid run ID")
+        return
+    pool = get_pool()
+    if pool is None:
+        await websocket.close(code=1013, reason="Database unavailable")
+        return
+    async with pool.acquire() as conn:
+        owned = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM loop_runs WHERE id = $1 AND organization_id = $2)",
+            parsed_run_id,
+            principal.organization_id,
+        )
+    if not owned:
+        await websocket.close(code=4404, reason="Run not found")
+        return
+    await websocket.accept(subprotocol="dbtune-auth")
 
     channel = f"run:{run_id}:steps"
 
@@ -305,7 +433,7 @@ async def ws_run_updates(websocket: WebSocket, run_id: str):
 
         if redis_client is None:
             # Fallback: poll the database for updates
-            await _poll_run_updates(websocket, UUID(run_id))
+            await _poll_run_updates(websocket, parsed_run_id, principal.organization_id)
             return
 
         # Subscribe to the run's step transition channel
@@ -343,7 +471,7 @@ async def ws_run_updates(websocket: WebSocket, run_id: str):
             pass
 
 
-async def _poll_run_updates(websocket: WebSocket, run_id: UUID):
+async def _poll_run_updates(websocket: WebSocket, run_id: UUID, organization_id: UUID):
     """Fallback polling for run status when Redis is unavailable."""
     from backend.db.pool import get_pool
 
@@ -356,9 +484,10 @@ async def _poll_run_updates(websocket: WebSocket, run_id: UUID):
                     row = await conn.fetchrow(
                         """
                         SELECT current_step, status, last_step_transition_at
-                        FROM loop_runs WHERE id = $1
+                        FROM loop_runs WHERE id = $1 AND organization_id = $2
                         """,
                         run_id,
+                        organization_id,
                     )
                 if row and row["current_step"] != last_step:
                     last_step = row["current_step"]
