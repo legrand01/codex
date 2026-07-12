@@ -592,7 +592,7 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
 - [~] 21. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 22. Persistent tuning-session product workflow
+- [~] 22. Persistent tuning-session product workflow
 
   - [ ] 22.1 Replace active-only run listing with persistent session history
     - Add paginated/filterable all-status runs API while retaining an active-only filter

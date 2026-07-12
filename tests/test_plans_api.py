@@ -317,6 +317,28 @@ async def test_list_plans_custom_page():
         app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_list_plans_can_include_session_history():
+    """A run-scoped query can include plans beyond the pending queue."""
+    run_id = uuid.uuid4()
+    applied = _make_plan_record(run_id=run_id, status="applied")
+    mock_conn = MockConnection(records=[applied])
+    mock_conn.fetchrow_responses = [MockRecord(total=1)]
+    dep, override = _override_db(mock_conn)
+
+    app.dependency_overrides[dep] = override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                f"/api/v1/plans/?run_id={run_id}&pending_only=false"
+            )
+            assert response.status_code == 200
+            assert response.json()["plans"][0]["status"] == "applied"
+    finally:
+        app.dependency_overrides.clear()
+
+
 # ---------------------------------------------------------------------------
 # API endpoint tests: GET /api/v1/plans/{plan_id} (get plan detail)
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ Provides routes for:
 - POST /api/v1/runs/ - Start a new run
 - POST /api/v1/runs/{run_id}/halt - Halt an active run
 - GET /api/v1/runs/{run_id} - Get run status
-- GET /api/v1/runs/ - List active runs
+- GET /api/v1/runs/ - List persistent tuning sessions
 - WebSocket /ws/runs/{run_id} - Real-time step transition updates
 
 Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6
@@ -75,6 +75,7 @@ class RunStatusResponse(BaseModel):
     current_iteration: int
     max_iterations: int
     started_at: str
+    completed_at: Optional[str] = None
     last_step_transition_at: str
     elapsed_seconds: float
     failure_reason: Optional[str] = None
@@ -82,7 +83,7 @@ class RunStatusResponse(BaseModel):
 
 
 class RunListResponse(BaseModel):
-    """Response model for listing active runs."""
+    """Response model for listing persistent tuning sessions."""
 
     runs: List[RunSummary]
     total: int
@@ -287,7 +288,7 @@ async def get_run_status(
     row = await db.fetchrow(
         """
         SELECT id, goal, status, current_step, current_iteration,
-               max_iterations, started_at, last_step_transition_at,
+               max_iterations, started_at, completed_at, last_step_transition_at,
                failure_reason
         FROM loop_runs
         WHERE id = $1 AND organization_id = $2
@@ -299,11 +300,14 @@ async def get_run_status(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
 
-    now = datetime.now(timezone.utc)
     started_at = row["started_at"]
     if started_at.tzinfo is None:
         started_at = started_at.replace(tzinfo=timezone.utc)
-    elapsed = (now - started_at).total_seconds()
+    completed_at = row.get("completed_at")
+    if completed_at and completed_at.tzinfo is None:
+        completed_at = completed_at.replace(tzinfo=timezone.utc)
+    elapsed_end = completed_at or datetime.now(timezone.utc)
+    elapsed = (elapsed_end - started_at).total_seconds()
 
     # Check for guardrail violation details
     guardrail_violation = None
@@ -326,6 +330,7 @@ async def get_run_status(
         current_iteration=row["current_iteration"],
         max_iterations=row["max_iterations"],
         started_at=started_at.isoformat(),
+        completed_at=completed_at.isoformat() if completed_at else None,
         last_step_transition_at=last_step.isoformat() if last_step else started_at.isoformat(),
         elapsed_seconds=round(elapsed, 2),
         failure_reason=row["failure_reason"],
@@ -334,24 +339,31 @@ async def get_run_status(
 
 
 @router.get("/api/v1/runs/", response_model=RunListResponse)
-async def list_active_runs(
+async def list_runs(
+    active_only: bool = False,
     db=Depends(get_db),
     principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
 ) -> RunListResponse:
     """
-    List all active DBA loop runs.
+    List persistent DBA tuning sessions, including terminal runs by default.
 
-    Shows: run ID, goal, current step, elapsed time, last step transition.
+    ``active_only=true`` retains the operational queue view for callers that
+    need it. Terminal durations are frozen at ``completed_at``.
 
     Requirements: 2.1, 2.5
     """
+    active_clause = (
+        "AND status IN ('queued', 'running', 'waiting_approval', 'unresponsive')"
+        if active_only
+        else ""
+    )
     rows = await db.fetch(
-        """
+        f"""
         SELECT id, goal, status, current_step, current_iteration,
-               started_at, last_step_transition_at
+               started_at, completed_at, last_step_transition_at
         FROM loop_runs
         WHERE organization_id = $1
-          AND status IN ('queued', 'running', 'waiting_approval', 'unresponsive')
+          {active_clause}
         ORDER BY started_at DESC
         """,
         principal.organization_id,
@@ -363,7 +375,10 @@ async def list_active_runs(
         started_at = row["started_at"]
         if started_at.tzinfo is None:
             started_at = started_at.replace(tzinfo=timezone.utc)
-        elapsed = (now - started_at).total_seconds()
+        completed_at = row.get("completed_at")
+        if completed_at and completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=timezone.utc)
+        elapsed = ((completed_at or now) - started_at).total_seconds()
 
         last_step = row["last_step_transition_at"]
         if last_step and last_step.tzinfo is None:
@@ -379,6 +394,7 @@ async def list_active_runs(
                 status=row["status"],
                 current_iteration=row["current_iteration"],
                 started_at=started_at,
+                completed_at=completed_at,
                 last_step_transition_at=last_step if last_step else started_at,
                 elapsed_seconds=round(elapsed, 2),
             )

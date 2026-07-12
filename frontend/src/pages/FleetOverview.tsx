@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { fleetApi } from '../api/client';
 import type { HostSummary, WSFleetUpdate } from '../api/types';
 import { useApi } from '../hooks/useApi';
@@ -90,9 +91,10 @@ export function FleetOverview() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
         <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#111827' }}>Fleet Overview</h2>
-        <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-          {displayHosts.length} host{displayHosts.length !== 1 ? 's' : ''} registered
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>{displayHosts.length} host{displayHosts.length !== 1 ? 's' : ''} registered</span>
+          <Link to="/tuning/new" style={{ padding: '9px 14px', background: '#2563eb', color: '#fff', borderRadius: '6px', textDecoration: 'none', fontWeight: 600 }}>Start tuning</Link>
+        </div>
       </div>
       <DataTable
         columns={columns}

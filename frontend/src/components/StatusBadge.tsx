@@ -44,7 +44,9 @@ function getPlanStatusVariant(status: PlanStatus): BadgeVariant {
 
 function getRunStatusVariant(status: RunStatus): BadgeVariant {
   switch (status) {
+    case 'queued': return 'neutral';
     case 'running': return 'info';
+    case 'waiting_approval': return 'warning';
     case 'completed': return 'success';
     case 'failed': return 'danger';
     case 'manually_halted': return 'warning';

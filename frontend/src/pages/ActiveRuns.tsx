@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { runsApi } from '../api/client';
 import type { RunSummary, WSRunUpdate } from '../api/types';
 import { useApi } from '../hooks/useApi';
@@ -23,7 +24,7 @@ function isUnresponsive(run: RunSummary): boolean {
 
 export function ActiveRuns() {
   const { data: runs, loading, error, refetch } = useApi<RunSummary[]>(
-    () => runsApi.listActiveRuns(),
+    () => runsApi.listRuns(),
     [],
   );
   const [runList, setRunList] = useState<RunSummary[] | null>(null);
@@ -134,9 +135,7 @@ export function ActiveRuns() {
       key: 'actions',
       header: 'Actions',
       render: (r) => {
-        if (r.status !== 'running') {
-          return <span style={{ color: '#9ca3af', fontSize: '0.8rem' }}>N/A</span>;
-        }
+        const active = ['queued', 'running', 'waiting_approval', 'unresponsive'].includes(r.status);
         if (haltConfirmId === r.id) {
           return (
             <div style={{ display: 'flex', gap: '4px' }}>
@@ -171,33 +170,25 @@ export function ActiveRuns() {
             </div>
           );
         }
-        return (
-          <button
-            onClick={() => setHaltConfirmId(r.id)}
-            style={{
-              padding: '4px 8px',
-              fontSize: '0.75rem',
-              backgroundColor: '#fef2f2',
-              color: '#dc2626',
-              border: '1px solid #fecaca',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            Halt
-          </button>
-        );
+        return <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <Link to={`/tuning/${r.id}`} style={{ fontSize: '0.8rem', color: '#2563eb' }}>View</Link>
+          {active && <button
+              onClick={() => setHaltConfirmId(r.id)}
+              style={{ padding: '4px 8px', fontSize: '0.75rem', backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: '4px', cursor: 'pointer' }}
+            >Halt</button>}
+        </div>;
       },
     },
   ];
 
-  if (loading) return <LoadingSpinner message="Loading active runs..." />;
+  if (loading) return <LoadingSpinner message="Loading tuning sessions..." />;
   if (error) return <div style={{ color: '#dc2626', padding: '16px' }}>Error: {error} <button onClick={refetch}>Retry</button></div>;
   if (!displayRuns || displayRuns.length === 0) {
     return (
       <EmptyState
-        title="No Active Runs"
-        description="Start a new DBA loop run to begin autonomous PostgreSQL investigation."
+        title="No Tuning Sessions"
+        description="Start tuning to collect a baseline and create the first recommendation plan."
+        action={<Link to="/tuning/new">Start tuning</Link>}
       />
     );
   }
@@ -205,10 +196,10 @@ export function ActiveRuns() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <h2 style={{ margin: 0, fontSize: '1.5rem', color: '#111827' }}>Active Runs</h2>
-        <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-          {displayRuns.length} active run{displayRuns.length !== 1 ? 's' : ''}
-        </span>
+        <div><h2 style={{ margin: 0, fontSize: '1.5rem', color: '#111827' }}>Tuning Sessions</h2>
+          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>{displayRuns.length} session{displayRuns.length !== 1 ? 's' : ''}, including completed history</span>
+        </div>
+        <Link to="/tuning/new" style={{ padding: '9px 14px', background: '#2563eb', color: '#fff', borderRadius: '6px', textDecoration: 'none', fontWeight: 600 }}>Start tuning</Link>
       </div>
       {haltError && (
         <div style={{ marginBottom: '12px', padding: '8px 12px', backgroundColor: '#fef2f2', color: '#dc2626', borderRadius: '6px', fontSize: '0.85rem' }}>

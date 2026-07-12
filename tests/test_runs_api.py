@@ -5,7 +5,7 @@ Tests cover:
 - POST /api/v1/runs/ - Start a new run
 - POST /api/v1/runs/{run_id}/halt - Halt a run
 - GET /api/v1/runs/{run_id} - Get run status
-- GET /api/v1/runs/ - List active runs
+- GET /api/v1/runs/ - List persistent tuning sessions
 - WebSocket /ws/runs/{run_id} - Real-time updates
 
 Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6
@@ -376,16 +376,53 @@ class TestGetRunStatus:
         assert data["guardrail_violation"] is not None
         assert "guardrail" in data["guardrail_violation"]["reason"].lower()
 
+    @pytest.mark.asyncio
+    async def test_completed_run_duration_is_frozen(self, api_client):
+        """Completed runs use completed_at rather than continuing to age."""
+        run_id = uuid4()
+        now = datetime.now(timezone.utc)
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow = AsyncMock(
+            return_value={
+                "id": run_id,
+                "goal": "Tune a completed workload",
+                "status": "completed",
+                "current_step": "report",
+                "current_iteration": 1,
+                "max_iterations": 3,
+                "started_at": now - timedelta(minutes=10),
+                "completed_at": now - timedelta(minutes=8),
+                "last_step_transition_at": now - timedelta(minutes=8),
+                "failure_reason": None,
+            }
+        )
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get(f"/api/v1/runs/{run_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["completed_at"] is not None
+        assert data["elapsed_seconds"] == pytest.approx(120.0, abs=0.1)
+
 
 # --- List Active Runs Tests ---
 
 
-class TestListActiveRuns:
+class TestListRuns:
     """Tests for GET /api/v1/runs/."""
 
     @pytest.mark.asyncio
-    async def test_list_active_runs_empty(self, api_client):
-        """Listing runs with no active runs returns empty list."""
+    async def test_list_runs_empty(self, api_client):
+        """Listing sessions with no runs returns an empty history."""
         mock_conn = AsyncMock()
         mock_conn.fetch = AsyncMock(return_value=[])
 
@@ -407,7 +444,7 @@ class TestListActiveRuns:
         assert data["total"] == 0
 
     @pytest.mark.asyncio
-    async def test_list_active_runs_with_results(self, api_client):
+    async def test_list_runs_with_results(self, api_client):
         """Listing runs returns active runs with correct details."""
         run_id = uuid4()
         now = datetime.now(timezone.utc)
@@ -422,6 +459,7 @@ class TestListActiveRuns:
                     "current_step": "diagnose",
                     "current_iteration": 2,
                     "started_at": now - timedelta(seconds=120),
+                    "completed_at": None,
                     "last_step_transition_at": now - timedelta(seconds=10),
                 }
             ]
@@ -445,3 +483,63 @@ class TestListActiveRuns:
         assert data["runs"][0]["goal"] == "Fix performance"
         assert data["runs"][0]["status"] == "running"
         assert data["runs"][0]["current_step"] == "diagnose"
+
+    @pytest.mark.asyncio
+    async def test_default_history_includes_completed_runs(self, api_client):
+        """The default query does not filter terminal sessions out."""
+        run_id = uuid4()
+        now = datetime.now(timezone.utc)
+        mock_conn = AsyncMock()
+        mock_conn.fetch = AsyncMock(
+            return_value=[
+                {
+                    "id": run_id,
+                    "goal": "Completed tuning session",
+                    "status": "completed",
+                    "current_step": "report",
+                    "current_iteration": 1,
+                    "started_at": now - timedelta(minutes=5),
+                    "completed_at": now - timedelta(minutes=3),
+                    "last_step_transition_at": now - timedelta(minutes=3),
+                }
+            ]
+        )
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get("/api/v1/runs/")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["runs"][0]["status"] == "completed"
+        assert data["runs"][0]["elapsed_seconds"] == pytest.approx(120.0, abs=0.1)
+        query = mock_conn.fetch.await_args.args[0]
+        assert "status IN" not in query
+
+    @pytest.mark.asyncio
+    async def test_active_only_filter_keeps_operational_queue(self, api_client):
+        """Callers can still request only operationally active sessions."""
+        mock_conn = AsyncMock()
+        mock_conn.fetch = AsyncMock(return_value=[])
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get("/api/v1/runs/?active_only=true")
+
+        assert response.status_code == 200
+        query = mock_conn.fetch.await_args.args[0]
+        assert "status IN ('queued', 'running', 'waiting_approval', 'unresponsive')" in query

@@ -10,6 +10,8 @@ import {
   RollbackControls,
   AuditLog,
   ReportsViewer,
+  StartTuning,
+  TuningSession,
 } from './pages';
 
 function App() {
@@ -87,6 +89,8 @@ function App() {
           <Routes>
             <Route path="/" element={<FleetOverview />} />
             <Route path="/runs" element={<ActiveRuns />} />
+            <Route path="/tuning/new" element={<StartTuning />} />
+            <Route path="/tuning/:runId" element={<TuningSession />} />
             <Route path="/plans" element={<ApprovalQueue />} />
             <Route path="/evidence" element={<EvidenceViewer />} />
             <Route path="/rollback" element={<RollbackControls />} />

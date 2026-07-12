@@ -215,14 +215,19 @@ async def _forward_with_retry(plan_id: UUID, host_id: UUID, proposed_changes: li
 
 
 @router.get("/", response_model=PlanListResponse)
-async def list_pending_plans(
+async def list_plans(
     page: int = 1,
     page_size: int = MAX_PAGE_SIZE,
+    run_id: Optional[UUID] = None,
+    pending_only: bool = True,
     db=Depends(get_db),
     principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
 ) -> PlanListResponse:
     """
-    List all plans awaiting human approval, ordered by submission time.
+    List plans ordered by submission time.
+
+    The global approval queue remains pending-only by default. A tuning session
+    can request all of its plans with ``run_id`` and ``pending_only=false``.
 
     Returns paginated results with max 50 plans per page.
 
@@ -239,30 +244,36 @@ async def list_pending_plans(
 
     offset = (page - 1) * page_size
 
-    # Count total pending plans
+    filters = ["organization_id = $1"]
+    args: list[object] = [principal.organization_id]
+    if pending_only:
+        args.append(PlanStatus.PENDING_APPROVAL.value)
+        filters.append(f"status = ${len(args)}")
+    if run_id is not None:
+        args.append(run_id)
+        filters.append(f"run_id = ${len(args)}")
+    where_clause = " AND ".join(filters)
+
     count_row = await db.fetchrow(
-        """
-        SELECT COUNT(*) as total FROM plans
-        WHERE status = $1 AND organization_id = $2
-        """,
-        PlanStatus.PENDING_APPROVAL.value,
-        principal.organization_id,
+        f"SELECT COUNT(*) as total FROM plans WHERE {where_clause}",
+        *args,
     )
     total = count_row["total"] if count_row else 0
 
     # Fetch paginated results ordered by submission_time ASC
+    limit_position = len(args) + 1
+    offset_position = len(args) + 2
     rows = await db.fetch(
-        """
+        f"""
         SELECT id, run_id, host_id, status, proposed_changes, evidence_references,
                risk_score, confidence_score, uncertainty_explanation,
                rollback_instructions, submission_time
         FROM plans
-        WHERE status = $1 AND organization_id = $2
+        WHERE {where_clause}
         ORDER BY submission_time ASC
-        LIMIT $3 OFFSET $4
+        LIMIT ${limit_position} OFFSET ${offset_position}
         """,
-        PlanStatus.PENDING_APPROVAL.value,
-        principal.organization_id,
+        *args,
         page_size,
         offset,
     )

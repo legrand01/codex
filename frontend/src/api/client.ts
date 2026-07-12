@@ -20,6 +20,7 @@ import type {
   DemoStatus,
   PaginatedResponse,
   StartRunRequest,
+  StartRunResponse,
   ReportSearchQuery,
 } from './types';
 
@@ -81,15 +82,17 @@ export const fleetApi = {
 
 // Runs API
 export const runsApi = {
-  async listActiveRuns(): Promise<RunSummary[]> {
-    const response = await request<RunListResponse | RunSummary[]>('/runs/');
+  async listRuns(activeOnly = false): Promise<RunSummary[]> {
+    const response = await request<RunListResponse | RunSummary[]>(
+      `/runs/?active_only=${activeOnly}`,
+    );
     return Array.isArray(response) ? response : response.runs ?? [];
   },
   getRunStatus(runId: string): Promise<RunSummary> {
     return request<RunSummary>(`/runs/${runId}`);
   },
-  startRun(data: StartRunRequest): Promise<RunSummary> {
-    return request<RunSummary>('/runs/', {
+  startRun(data: StartRunRequest): Promise<StartRunResponse> {
+    return request<StartRunResponse>('/runs/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -133,6 +136,12 @@ export const plansApi = {
       page_size: currentPageSize,
       total_pages: Math.max(1, Math.ceil(total / currentPageSize)),
     };
+  },
+  async listRunPlans(runId: string): Promise<PlanDetail[]> {
+    const response = await request<PlanListResponse>(
+      `/plans/?run_id=${encodeURIComponent(runId)}&pending_only=false`,
+    );
+    return response.plans ?? [];
   },
   getPlan(planId: string): Promise<PlanDetail> {
     return request<PlanDetail>(`/plans/${planId}`);

@@ -5,3 +5,5 @@ export { ApprovalQueue } from './ApprovalQueue';
 export { RollbackControls } from './RollbackControls';
 export { AuditLog } from './AuditLog';
 export { ReportsViewer } from './ReportsViewer';
+export { StartTuning } from './StartTuning';
+export { TuningSession } from './TuningSession';

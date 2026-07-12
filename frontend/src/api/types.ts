@@ -33,7 +33,9 @@ export type PlanStatus =
   | 'blocked';
 
 export type RunStatus =
+  | 'queued'
   | 'running'
+  | 'waiting_approval'
   | 'completed'
   | 'failed'
   | 'manually_halted'
@@ -67,6 +69,7 @@ export interface RunSummary {
   status: RunStatus;
   current_iteration: number;
   started_at: string;
+  completed_at: string | null;
   last_step_transition_at: string;
   elapsed_seconds: number;
 }
@@ -220,6 +223,13 @@ export interface StartRunRequest {
   host_id?: string;
   max_iterations?: number;
   max_steps?: number;
+}
+
+export interface StartRunResponse {
+  run_id: string;
+  status: RunStatus;
+  goal: string;
+  message: string;
 }
 
 export interface ReportSearchQuery {
