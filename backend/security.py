@@ -16,7 +16,7 @@ from backend.dependencies import get_db
 
 DEFAULT_ORGANIZATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 AGENT_PATH = re.compile(
-    r"^/api/v1/fleet/[0-9a-fA-F-]+/(heartbeat|role|evidence)$"
+    r"^/api/v1/fleet/[0-9a-fA-F-]+/(heartbeat|role|evidence|capabilities)$"
 )
 PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
 

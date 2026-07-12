@@ -594,14 +594,14 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
 
 - [~] 22. Persistent tuning-session product workflow
 
-  - [ ] 22.1 Replace active-only run listing with persistent session history
+  - [~] 22.1 Replace active-only run listing with persistent session history
     - Add paginated/filterable all-status runs API while retaining an active-only filter
     - Include completion timestamp and freeze terminal-run elapsed duration
     - Add indexes for host, status, objective, mode, and start/completion date filters
     - Preserve direct detail access for completed, failed, halted, and timed-out sessions
     - _Requirements: 16.1, 16.2, 16.6, 16.7_
 
-  - [ ] 22.2 Implement Start tuning flow
+  - [~] 22.2 Implement Start tuning flow
     - Add primary Start tuning action from Fleet and Tuning pages
     - Select host/database, objective, Workload_Fingerprint, mode, parameters, approval policy, measurement windows, and guardrails
     - Run capability/preflight checks before enabling session creation

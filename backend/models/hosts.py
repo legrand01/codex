@@ -16,6 +16,7 @@ class HostSummary(BaseModel):
 
     id: UUID
     hostname: str
+    database_name: Optional[str] = None
     health_status: HealthStatus
     connection_status: ConnectionStatus
     pg_version: Optional[str] = None

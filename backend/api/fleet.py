@@ -46,6 +46,7 @@ class HostRegistration(BaseModel):
     """Request model for registering a new host."""
 
     hostname: str = Field(..., min_length=1, max_length=255)
+    database_name: Optional[str] = Field(default=None, min_length=1, max_length=63)
     pg_version: Optional[str] = None
     server_role: Optional[str] = Field(None, pattern="^(primary|replica)$")
 
@@ -105,6 +106,30 @@ class EvidenceIngestResponse(BaseModel):
     total: int
 
 
+class CapabilityReportRequest(BaseModel):
+    """Independent capabilities observed by the authenticated Host Agent."""
+
+    connectivity: bool
+    system_information: bool
+    system_metrics: bool
+    pg_stat_statements: bool
+    query_text_collection: bool = False
+    configuration_read: bool
+    configuration_write: bool
+    reload_permission: bool
+    restart_capability: bool = False
+    provider_api: bool = False
+    managed_file_access: bool = False
+    details: Dict[str, Any] = Field(default_factory=dict)
+    observed_at: Optional[datetime] = None
+
+
+class CapabilityReportResponse(CapabilityReportRequest):
+    host_id: UUID
+    organization_id: UUID
+    observed_at: datetime
+
+
 class AgentTokenResponse(BaseModel):
     host_id: UUID
     agent_token: str
@@ -114,6 +139,16 @@ class ExecutionPolicyUpdate(BaseModel):
     environment: str = Field(..., pattern="^(development|staging|production)$")
     target_dsn_env: str = Field(..., min_length=1, max_length=255, pattern="^[A-Z][A-Z0-9_]+$")
     writes_enabled: bool = False
+    database_name: Optional[str] = Field(default=None, min_length=1, max_length=63)
+    platform_type: Optional[str] = Field(
+        default=None,
+        pattern="^(self_managed|aws_rds|aurora|cloud_sql|aiven|other_managed)$",
+    )
+    configuration_backend: Optional[str] = Field(
+        default=None, pattern="^(alter_system|managed_conf_file|provider)$"
+    )
+    managed_conf_enrolled: Optional[bool] = None
+    restart_required_enabled: Optional[bool] = None
 
 
 ALLOWED_EVIDENCE_TYPES = {
@@ -147,7 +182,7 @@ async def list_hosts(
     """
     rows = await db.fetch(
         "SELECT id, hostname, health_status, connection_status, "
-        "pg_version, server_role, last_heartbeat "
+        "pg_version, server_role, database_name, last_heartbeat "
         "FROM hosts WHERE organization_id = $1 ORDER BY hostname",
         principal.organization_id,
     )
@@ -163,6 +198,7 @@ async def list_hosts(
             HostSummary(
                 id=row["id"],
                 hostname=row["hostname"],
+                database_name=row.get("database_name"),
                 health_status=HealthStatus(row["health_status"]),
                 connection_status=current_connection_status,
                 pg_version=row["pg_version"],
@@ -189,7 +225,7 @@ async def get_host(
     """
     row = await db.fetchrow(
         "SELECT id, hostname, health_status, connection_status, "
-        "pg_version, server_role, last_heartbeat "
+        "pg_version, server_role, database_name, last_heartbeat "
         "FROM hosts WHERE id = $1 AND organization_id = $2",
         host_id,
         principal.organization_id,
@@ -206,6 +242,7 @@ async def get_host(
     return HostSummary(
         id=row["id"],
         hostname=row["hostname"],
+        database_name=row.get("database_name"),
         health_status=HealthStatus(row["health_status"]),
         connection_status=current_connection_status,
         pg_version=row["pg_version"],
@@ -242,11 +279,12 @@ async def register_host(
         )
 
     row = await db.fetchrow(
-        "INSERT INTO hosts (organization_id, hostname, pg_version, server_role) "
-        "VALUES ($1, $2, $3, $4) RETURNING id, hostname, health_status, "
-        "connection_status, pg_version, server_role, last_heartbeat",
+        "INSERT INTO hosts (organization_id, hostname, database_name, pg_version, server_role) "
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id, hostname, health_status, "
+        "connection_status, pg_version, server_role, database_name, last_heartbeat",
         principal.organization_id,
         registration.hostname,
+        registration.database_name,
         registration.pg_version,
         registration.server_role,
     )
@@ -257,6 +295,7 @@ async def register_host(
     return HostSummary(
         id=row["id"],
         hostname=row["hostname"],
+        database_name=row.get("database_name"),
         health_status=HealthStatus(row["health_status"]),
         connection_status=current_connection_status,
         pg_version=row["pg_version"],
@@ -355,6 +394,77 @@ async def receive_role_report(
         server_role=row["server_role"],
         last_heartbeat=row["last_heartbeat"],
     )
+
+
+@router.post(
+    "/{host_id}/capabilities",
+    response_model=CapabilityReportResponse,
+    status_code=201,
+)
+async def receive_capability_report(
+    host_id: UUID,
+    report: CapabilityReportRequest,
+    db=Depends(get_db),
+    _agent_id: UUID = Depends(require_agent),
+) -> CapabilityReportResponse:
+    """Upsert the independent capability snapshot consumed by preflight."""
+    observed_at = report.observed_at or datetime.now(timezone.utc)
+    row = await db.fetchrow(
+        """
+        INSERT INTO host_capabilities (
+            host_id, organization_id, connectivity, system_information,
+            system_metrics, pg_stat_statements, query_text_collection,
+            configuration_read, configuration_write, reload_permission,
+            restart_capability, provider_api, managed_file_access, details,
+            observed_at, updated_at
+        )
+        SELECT h.id, h.organization_id, $2, $3, $4, $5, $6, $7, $8, $9,
+               $10, $11, $12, $13::jsonb, $14, NOW()
+        FROM hosts h
+        WHERE h.id = $1
+        ON CONFLICT (host_id) DO UPDATE SET
+            organization_id = EXCLUDED.organization_id,
+            connectivity = EXCLUDED.connectivity,
+            system_information = EXCLUDED.system_information,
+            system_metrics = EXCLUDED.system_metrics,
+            pg_stat_statements = EXCLUDED.pg_stat_statements,
+            query_text_collection = EXCLUDED.query_text_collection,
+            configuration_read = EXCLUDED.configuration_read,
+            configuration_write = EXCLUDED.configuration_write,
+            reload_permission = EXCLUDED.reload_permission,
+            restart_capability = EXCLUDED.restart_capability,
+            provider_api = EXCLUDED.provider_api,
+            managed_file_access = EXCLUDED.managed_file_access,
+            details = EXCLUDED.details,
+            observed_at = EXCLUDED.observed_at,
+            updated_at = NOW()
+        RETURNING host_id, organization_id, connectivity, system_information,
+                  system_metrics, pg_stat_statements, query_text_collection,
+                  configuration_read, configuration_write, reload_permission,
+                  restart_capability, provider_api, managed_file_access, details,
+                  observed_at
+        """,
+        host_id,
+        report.connectivity,
+        report.system_information,
+        report.system_metrics,
+        report.pg_stat_statements,
+        report.query_text_collection,
+        report.configuration_read,
+        report.configuration_write,
+        report.reload_permission,
+        report.restart_capability,
+        report.provider_api,
+        report.managed_file_access,
+        json.dumps(report.details),
+        observed_at,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Host with id '{host_id}' not found")
+    response_data = dict(row)
+    if isinstance(response_data.get("details"), str):
+        response_data["details"] = json.loads(response_data["details"])
+    return CapabilityReportResponse(**response_data)
 
 
 def _quality_score_for_payload(payload: Any) -> float:
@@ -497,22 +607,33 @@ async def update_execution_policy(
         """
         UPDATE hosts
         SET environment = $3, target_dsn_env = $4, writes_enabled = $5,
+            database_name = COALESCE($6, database_name),
+            platform_type = COALESCE($7, platform_type),
+            configuration_backend = COALESCE($8, configuration_backend),
+            managed_conf_enrolled = COALESCE($9, managed_conf_enrolled),
+            restart_required_enabled = COALESCE($10, restart_required_enabled),
             updated_at = NOW()
         WHERE id = $1 AND organization_id = $2
         RETURNING id, hostname, health_status, connection_status,
-                  pg_version, server_role, last_heartbeat
+                  pg_version, server_role, database_name, last_heartbeat
         """,
         host_id,
         principal.organization_id,
         policy.environment,
         policy.target_dsn_env,
         policy.writes_enabled,
+        policy.database_name,
+        policy.platform_type,
+        policy.configuration_backend,
+        policy.managed_conf_enrolled,
+        policy.restart_required_enabled,
     )
     if row is None:
         raise HTTPException(status_code=404, detail=f"Host with id '{host_id}' not found")
     return HostSummary(
         id=row["id"],
         hostname=row["hostname"],
+        database_name=row.get("database_name"),
         health_status=HealthStatus(row["health_status"]),
         connection_status=classify_connection_status(row["last_heartbeat"]),
         pg_version=row["pg_version"],

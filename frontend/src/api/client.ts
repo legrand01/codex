@@ -7,6 +7,9 @@ import type {
   FleetListResponse,
   RunSummary,
   RunListResponse,
+  RunFilters,
+  TuningMode,
+  TuningPreflight,
   EvidenceSnapshot,
   EvidenceListResponse,
   PlanDetail,
@@ -82,11 +85,28 @@ export const fleetApi = {
 
 // Runs API
 export const runsApi = {
-  async listRuns(activeOnly = false): Promise<RunSummary[]> {
+  async listRunHistory(filters: RunFilters = {}): Promise<RunListResponse> {
+    const params = new URLSearchParams();
+    if (filters.page) params.set('page', String(filters.page));
+    if (filters.page_size) params.set('page_size', String(filters.page_size));
+    if (filters.active_only) params.set('active_only', 'true');
+    if (filters.host_id) params.set('host_id', filters.host_id);
+    if (filters.database) params.set('database', filters.database);
+    for (const status of filters.status ?? []) params.append('status', status);
+    if (filters.tuning_target) params.set('tuning_target', filters.tuning_target);
+    if (filters.tuning_mode) params.set('tuning_mode', filters.tuning_mode);
+    if (filters.objective) params.set('objective', filters.objective);
+    if (filters.date_from) params.set('date_from', filters.date_from);
+    if (filters.date_to) params.set('date_to', filters.date_to);
     const response = await request<RunListResponse | RunSummary[]>(
-      `/runs/?active_only=${activeOnly}`,
+      `/runs/?${params.toString()}`,
     );
-    return Array.isArray(response) ? response : response.runs ?? [];
+    return Array.isArray(response)
+      ? { runs: response, total: response.length, page: 1, page_size: response.length, total_pages: 1 }
+      : response;
+  },
+  async listRuns(filters: RunFilters = {}): Promise<RunSummary[]> {
+    return (await this.listRunHistory(filters)).runs;
   },
   getRunStatus(runId: string): Promise<RunSummary> {
     return request<RunSummary>(`/runs/${runId}`);
@@ -96,6 +116,10 @@ export const runsApi = {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  },
+  getPreflight(hostId: string, mode: TuningMode): Promise<TuningPreflight> {
+    const params = new URLSearchParams({ host_id: hostId, mode });
+    return request<TuningPreflight>(`/runs/preflight?${params.toString()}`);
   },
   haltRun(runId: string): Promise<{ message: string }> {
     return request<{ message: string }>(`/runs/${runId}/halt`, {

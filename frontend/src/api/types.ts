@@ -42,6 +42,15 @@ export type RunStatus =
   | 'unresponsive'
   | 'timed_out';
 
+export type TuningTarget =
+  | 'recommended_fingerprint'
+  | 'custom_fingerprint'
+  | 'system_wide_aqr'
+  | 'transactions_per_second'
+  | 'composite';
+
+export type TuningMode = 'reload_only' | 'restart_enabled';
+
 export type ActorType = 'human' | 'system';
 export type AuditResult = 'success' | 'failure' | 'blocked';
 export type RollbackStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
@@ -50,6 +59,7 @@ export type RollbackStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 export interface HostSummary {
   id: string;
   hostname: string;
+  database_name: string | null;
   health_status: HealthStatus;
   connection_status: ConnectionStatus;
   pg_version: string | null;
@@ -64,9 +74,16 @@ export interface FleetListResponse {
 
 export interface RunSummary {
   id: string;
+  host_id: string | null;
+  hostname: string | null;
+  database_name: string | null;
   goal: string;
   current_step: WorkflowStep;
   status: RunStatus;
+  tuning_target: TuningTarget;
+  tuning_mode: TuningMode;
+  baseline_score: number | null;
+  best_score: number | null;
   current_iteration: number;
   started_at: string;
   completed_at: string | null;
@@ -77,6 +94,59 @@ export interface RunSummary {
 export interface RunListResponse {
   runs: RunSummary[];
   total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface RunFilters {
+  page?: number;
+  page_size?: number;
+  active_only?: boolean;
+  host_id?: string;
+  database?: string;
+  status?: RunStatus[];
+  tuning_target?: TuningTarget;
+  tuning_mode?: TuningMode;
+  objective?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
+export interface CapabilityCheck {
+  key: string;
+  label: string;
+  status: 'passed' | 'warning' | 'blocked';
+  blocking: boolean;
+  message: string;
+}
+
+export interface ParameterCapability {
+  name: string;
+  context: 'reload' | 'restart';
+  allowlisted: boolean;
+  available: boolean;
+  reason: string;
+}
+
+export interface TuningPreflight {
+  host_id: string;
+  hostname: string;
+  database_name: string | null;
+  environment: string;
+  platform_type: string;
+  configuration_backend: string;
+  pg_version: string | null;
+  server_role: string | null;
+  requested_mode: TuningMode;
+  ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  checks: CapabilityCheck[];
+  supported_targets: TuningTarget[];
+  supported_modes: Array<{ mode: TuningMode; available: boolean; reason: string }>;
+  parameters: ParameterCapability[];
+  capability_observed_at: string | null;
 }
 
 export interface EvidenceSnapshot {
@@ -221,6 +291,15 @@ export interface WSRunUpdate {
 export interface StartRunRequest {
   goal: string;
   host_id?: string;
+  database_name?: string;
+  tuning_target?: TuningTarget;
+  tuning_mode?: TuningMode;
+  workload_fingerprint_id?: string;
+  selected_parameters?: string[];
+  approval_policy?: 'per_candidate' | 'final_only';
+  warmup_window_seconds?: number;
+  measurement_window_seconds?: number;
+  objective_guardrails?: Record<string, number>;
   max_iterations?: number;
   max_steps?: number;
 }

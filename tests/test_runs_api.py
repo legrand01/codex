@@ -155,6 +155,82 @@ class TestStartRunEndpoint:
 
         assert response.status_code == 422
 
+    @pytest.mark.asyncio
+    async def test_start_run_persists_wizard_contract(self, api_client):
+        """Session creation persists fields supplied by the future wizard."""
+        host_id = uuid4()
+        organization_id = uuid4()
+        mock_conn = _mock_db_dependency()
+        mock_conn.fetchrow = AsyncMock(
+            return_value={
+                "id": host_id,
+                "organization_id": organization_id,
+                "database_name": "defaultdb",
+                "configuration_backend": "alter_system",
+            }
+        )
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.post(
+                "/api/v1/runs/",
+                json={
+                    "host_id": str(host_id),
+                    "database_name": "appdb",
+                    "goal": "Improve checkout AQR",
+                    "tuning_target": "system_wide_aqr",
+                    "tuning_mode": "reload_only",
+                    "selected_parameters": ["work_mem", "random_page_cost"],
+                    "approval_policy": "per_candidate",
+                    "warmup_window_seconds": 90,
+                    "measurement_window_seconds": 600,
+                    "objective_guardrails": {"aqr_regression_pct": 5.0},
+                },
+            )
+
+        assert response.status_code == 200
+        loop_insert = next(
+            call
+            for call in mock_conn.execute.await_args_list
+            if "INSERT INTO loop_runs" in call.args[0]
+        )
+        assert "database_name, tuning_target, tuning_mode" in loop_insert.args[0]
+        assert "appdb" in loop_insert.args
+        assert "system_wide_aqr" in loop_insert.args
+        assert "reload_only" in loop_insert.args
+        assert 600 in loop_insert.args
+
+    @pytest.mark.asyncio
+    async def test_reload_only_rejects_restart_parameters(self, api_client):
+        mock_conn = _mock_db_dependency()
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.post(
+                "/api/v1/runs/",
+                json={
+                    "goal": "Tune memory",
+                    "tuning_mode": "reload_only",
+                    "selected_parameters": ["shared_buffers"],
+                },
+            )
+
+        assert response.status_code == 422
+        assert "restart parameters" in response.text
+
 
 # --- Halt Run Tests ---
 
@@ -425,6 +501,7 @@ class TestListRuns:
         """Listing sessions with no runs returns an empty history."""
         mock_conn = AsyncMock()
         mock_conn.fetch = AsyncMock(return_value=[])
+        mock_conn.fetchval = AsyncMock(return_value=0)
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
@@ -450,6 +527,7 @@ class TestListRuns:
         now = datetime.now(timezone.utc)
 
         mock_conn = AsyncMock()
+        mock_conn.fetchval = AsyncMock(return_value=1)
         mock_conn.fetch = AsyncMock(
             return_value=[
                 {
@@ -490,6 +568,7 @@ class TestListRuns:
         run_id = uuid4()
         now = datetime.now(timezone.utc)
         mock_conn = AsyncMock()
+        mock_conn.fetchval = AsyncMock(return_value=1)
         mock_conn.fetch = AsyncMock(
             return_value=[
                 {
@@ -528,6 +607,7 @@ class TestListRuns:
         """Callers can still request only operationally active sessions."""
         mock_conn = AsyncMock()
         mock_conn.fetch = AsyncMock(return_value=[])
+        mock_conn.fetchval = AsyncMock(return_value=0)
 
         with patch("backend.dependencies.get_pool") as mock_get_pool:
             mock_pool = MagicMock()
@@ -543,3 +623,248 @@ class TestListRuns:
         assert response.status_code == 200
         query = mock_conn.fetch.await_args.args[0]
         assert "status IN ('queued', 'running', 'waiting_approval', 'unresponsive')" in query
+
+    @pytest.mark.asyncio
+    async def test_session_filters_are_composable_and_paginated(self, api_client):
+        """History filters bind values and preserve an accurate total."""
+        host_id = uuid4()
+        mock_conn = AsyncMock()
+        mock_conn.fetchval = AsyncMock(return_value=57)
+        mock_conn.fetch = AsyncMock(return_value=[])
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get(
+                "/api/v1/runs/",
+                params=[
+                    ("page", "2"),
+                    ("page_size", "20"),
+                    ("host_id", str(host_id)),
+                    ("database", "appdb"),
+                    ("status", "completed"),
+                    ("status", "failed"),
+                    ("tuning_target", "system_wide_aqr"),
+                    ("tuning_mode", "reload_only"),
+                    ("objective", "checkout"),
+                    ("date_from", "2026-07-01T00:00:00Z"),
+                    ("date_to", "2026-07-31T23:59:59Z"),
+                ],
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {
+            "runs": [],
+            "total": 57,
+            "page": 2,
+            "page_size": 20,
+            "total_pages": 3,
+        }
+        count_query = mock_conn.fetchval.await_args.args[0]
+        assert "r.host_id" in count_query
+        assert "r.database_name" in count_query
+        assert "r.status = ANY" in count_query
+        assert "r.tuning_target" in count_query
+        assert "r.tuning_mode" in count_query
+        assert "plainto_tsquery" in count_query
+        assert "r.started_at >=" in count_query
+        assert "r.started_at <=" in count_query
+        assert "checkout" not in count_query
+        fetch_args = mock_conn.fetch.await_args.args
+        assert fetch_args[-2:] == (20, 20)
+
+    @pytest.mark.asyncio
+    async def test_session_filter_rejects_reversed_date_range(self, api_client):
+        mock_conn = AsyncMock()
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get(
+                "/api/v1/runs/",
+                params={
+                    "date_from": "2026-08-01T00:00:00Z",
+                    "date_to": "2026-07-01T00:00:00Z",
+                },
+            )
+        assert response.status_code == 422
+
+
+def _capability_row(**overrides):
+    row = {
+        "id": uuid4(),
+        "hostname": "postgres-lab",
+        "database_name": "appdb",
+        "environment": "staging",
+        "platform_type": "self_managed",
+        "configuration_backend": "alter_system",
+        "pg_version": "PostgreSQL 17.5",
+        "server_role": "primary",
+        "connection_status": "connected",
+        "target_dsn_env": "LAB_TARGET_DSN",
+        "writes_enabled": True,
+        "restart_required_enabled": True,
+        "managed_conf_enrolled": False,
+        "connectivity": True,
+        "system_information": True,
+        "system_metrics": True,
+        "pg_stat_statements": True,
+        "query_text_collection": False,
+        "configuration_read": True,
+        "configuration_write": True,
+        "reload_permission": True,
+        "restart_capability": True,
+        "provider_api": False,
+        "managed_file_access": False,
+        "capability_observed_at": datetime.now(timezone.utc),
+    }
+    row.update(overrides)
+    return row
+
+
+class TestTuningPreflight:
+    """Tests for the Start tuning capability contract."""
+
+    @pytest.mark.asyncio
+    async def test_reload_preflight_returns_modes_and_parameter_catalog(self, api_client):
+        host = _capability_row()
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow = AsyncMock(return_value=host)
+        mock_conn.fetch = AsyncMock(
+            return_value=[
+                {"setting_name": "work_mem", "parameter_context": "reload"},
+                {"setting_name": "shared_buffers", "parameter_context": "restart"},
+            ]
+        )
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get(
+                "/api/v1/runs/preflight",
+                params={"host_id": str(host["id"]), "mode": "reload_only"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ready"] is True
+        assert data["database_name"] == "appdb"
+        assert data["blockers"] == []
+        assert data["warnings"]
+        assert len(data["parameters"]) == 19
+        work_mem = next(item for item in data["parameters"] if item["name"] == "work_mem")
+        shared = next(
+            item for item in data["parameters"] if item["name"] == "shared_buffers"
+        )
+        assert work_mem["available"] is True
+        assert shared["available"] is False
+        assert "restart-enabled" in shared["reason"]
+        assert data["supported_modes"][1]["available"] is True
+
+    @pytest.mark.asyncio
+    async def test_restart_preflight_fails_closed_without_restart_capability(
+        self, api_client
+    ):
+        host = _capability_row(restart_capability=False)
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow = AsyncMock(return_value=host)
+        mock_conn.fetch = AsyncMock(
+            return_value=[
+                {"setting_name": "work_mem", "parameter_context": "reload"}
+            ]
+        )
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get(
+                "/api/v1/runs/preflight",
+                params={"host_id": str(host["id"]), "mode": "restart_enabled"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ready"] is False
+        restart_check = next(
+            item for item in data["checks"] if item["key"] == "restart_capability"
+        )
+        assert restart_check["status"] == "blocked"
+        assert data["supported_modes"][1]["available"] is False
+
+    @pytest.mark.asyncio
+    async def test_preflight_blocks_stale_capability_snapshot(self, api_client):
+        host = _capability_row(
+            capability_observed_at=datetime.now(timezone.utc) - timedelta(minutes=6)
+        )
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow = AsyncMock(return_value=host)
+        mock_conn.fetch = AsyncMock(
+            return_value=[
+                {"setting_name": "work_mem", "parameter_context": "reload"}
+            ]
+        )
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get(
+                "/api/v1/runs/preflight", params={"host_id": str(host["id"])}
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ready"] is False
+        freshness = next(
+            item for item in data["checks"] if item["key"] == "capability_freshness"
+        )
+        assert freshness["status"] == "blocked"
+
+    @pytest.mark.asyncio
+    async def test_preflight_unknown_host_returns_404(self, api_client):
+        mock_conn = AsyncMock()
+        mock_conn.fetchrow = AsyncMock(return_value=None)
+
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.get(
+                "/api/v1/runs/preflight", params={"host_id": str(uuid4())}
+            )
+
+        assert response.status_code == 404

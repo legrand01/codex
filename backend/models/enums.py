@@ -38,6 +38,36 @@ class WorkflowStep(str, Enum):
     REPORT = "report"
 
 
+class RunStatus(str, Enum):
+    """Persistent tuning-session lifecycle states."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    WAITING_APPROVAL = "waiting_approval"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    MANUALLY_HALTED = "manually_halted"
+    UNRESPONSIVE = "unresponsive"
+    TIMED_OUT = "timed_out"
+
+
+class TuningTarget(str, Enum):
+    """Objective families selectable by the tuning wizard."""
+
+    RECOMMENDED_FINGERPRINT = "recommended_fingerprint"
+    CUSTOM_FINGERPRINT = "custom_fingerprint"
+    SYSTEM_WIDE_AQR = "system_wide_aqr"
+    TRANSACTIONS_PER_SECOND = "transactions_per_second"
+    COMPOSITE = "composite"
+
+
+class TuningMode(str, Enum):
+    """Whether a session may consider restart-context parameters."""
+
+    RELOAD_ONLY = "reload_only"
+    RESTART_ENABLED = "restart_enabled"
+
+
 class PlanStatus(str, Enum):
     """Status of a plan throughout its lifecycle."""
 

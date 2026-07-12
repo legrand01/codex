@@ -495,3 +495,58 @@ async def test_receive_pg_stats_evidence_splits_snapshots():
             assert inserted_types == ["pg_stat_database", "pg_stat_statements"]
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_receive_capability_report_upserts_agent_snapshot():
+    """POST /fleet/{host_id}/capabilities persists independent preflight inputs."""
+    host_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    observed_at = datetime.now(timezone.utc)
+    insert_result = {
+        "host_id": host_id,
+        "organization_id": organization_id,
+        "connectivity": True,
+        "system_information": True,
+        "system_metrics": True,
+        "pg_stat_statements": True,
+        "query_text_collection": False,
+        "configuration_read": True,
+        "configuration_write": True,
+        "reload_permission": True,
+        "restart_capability": False,
+        "provider_api": False,
+        "managed_file_access": False,
+        "details": '{"source":"agent-probe"}',
+        "observed_at": observed_at,
+    }
+    mock_conn = MockConnection(insert_result=insert_result)
+    dep, override = _override_db(mock_conn)
+
+    app.dependency_overrides[dep] = override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v1/fleet/{host_id}/capabilities",
+                json={
+                    "connectivity": True,
+                    "system_information": True,
+                    "system_metrics": True,
+                    "pg_stat_statements": True,
+                    "configuration_read": True,
+                    "configuration_write": True,
+                    "reload_permission": True,
+                    "details": {"source": "agent-probe"},
+                    "observed_at": observed_at.isoformat(),
+                },
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["host_id"] == str(host_id)
+        assert data["configuration_write"] is True
+        assert data["restart_capability"] is False
+        assert data["details"] == {"source": "agent-probe"}
+    finally:
+        app.dependency_overrides.clear()
