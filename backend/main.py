@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from backend.api.audit import router as audit_router
 from backend.api.baselines import router as baselines_router
+from backend.api.candidates import router as candidates_router
 from backend.api.demo import router as demo_router
 from backend.api.evidence import router as evidence_router
 from backend.api.fingerprints import router as fingerprints_router
@@ -105,6 +106,7 @@ app.include_router(fleet_router)
 app.include_router(ws_fleet_router)
 app.include_router(audit_router)
 app.include_router(baselines_router)
+app.include_router(candidates_router)
 app.include_router(evidence_router)
 app.include_router(fingerprints_router)
 app.include_router(rollback_router)

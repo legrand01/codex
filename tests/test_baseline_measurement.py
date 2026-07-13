@@ -149,6 +149,20 @@ def test_dominant_query_is_routed_to_non_executable_advisory():
     )
 
 
+def test_work_mem_spill_is_a_stronger_configuration_signal_than_query_shape():
+    query = (
+        "SELECT customer_id, SUM(amount) FROM sales\n"
+        "WHERE created_at > $1\nGROUP BY customer_id\nORDER BY SUM(amount) DESC"
+    )
+    evidence = _statements(query) + _database((0, 12)) + _supporting()
+
+    result = build_baseline_measurement(_run(), evidence, FINGERPRINT)
+
+    assert result["status"] == "ready"
+    assert result["root_cause_category"] == "configuration"
+    assert result["root_cause_details"]["temp_files_delta"] == 12
+
+
 def test_unstable_or_truncated_workload_pauses_baseline():
     evidence = _statements(limit=1) + _database((0, 0)) + _supporting()
     result = build_baseline_measurement(_run(), evidence, FINGERPRINT)
@@ -201,6 +215,41 @@ def test_baseline_ignores_statement_activity_before_requested_window():
 
     assert result["observed_measurement_window_seconds"] == pytest.approx(300)
     assert result["objective_score"] == pytest.approx(21.3)
+
+
+def test_nearest_pre_cutoff_snapshot_is_retained_for_counter_delta():
+    statement_rows = [
+        _row(
+            "pg_stat_statements",
+            seconds,
+            {
+                "queries": [
+                    {
+                        "queryid": "slow-family",
+                        "query": "SELECT pg_sleep($1)",
+                        "calls": 1000 + seconds,
+                        "mean_exec_time": 20,
+                        "total_exec_time": (1000 + seconds) * 20,
+                    }
+                ],
+                "total_queries_collected": 1,
+                "max_query_entries": 100,
+            },
+        )
+        for seconds in (0, 10, 20, 30)
+    ]
+    run = {**_run(), "measurement_window_seconds": 30}
+    database_rows = _database((0, 0))
+    database_rows[-1]["collected_at"] = NOW + timedelta(seconds=30)
+    supporting = _supporting()
+    for row in supporting:
+        row["collected_at"] = NOW + timedelta(seconds=30.2)
+    evidence = statement_rows + database_rows + supporting
+
+    result = build_baseline_measurement(run, evidence, FINGERPRINT)
+
+    assert result["observed_measurement_window_seconds"] == pytest.approx(30)
+    assert not any("requested 30s" in warning for warning in result["warnings"])
 
 
 def test_missing_required_telemetry_pauses_as_insufficient_evidence():

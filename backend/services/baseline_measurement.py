@@ -60,13 +60,29 @@ def _typed_rows(evidence: Sequence[Mapping[str, Any]], evidence_type: str):
 def _bounded_evidence(
     evidence: Sequence[Mapping[str, Any]], requested_window_seconds: int
 ) -> list[Mapping[str, Any]]:
-    """Limit baseline inputs to the requested trailing observation window."""
+    """Limit inputs while retaining the nearest counter endpoint before cutoff."""
     timestamps = [_timestamp(row.get("collected_at")) for row in evidence]
     latest = max(timestamps, default=0.0)
     if latest <= 0:
         return list(evidence)
     cutoff = latest - requested_window_seconds
-    return [row for row in evidence if _timestamp(row.get("collected_at")) >= cutoff]
+    endpoint_tolerance = max(5.0, min(60.0, requested_window_seconds / 2))
+    bounded: list[Mapping[str, Any]] = []
+    evidence_types = {str(row.get("evidence_type")) for row in evidence}
+    for evidence_type in evidence_types:
+        rows = _typed_rows(evidence, evidence_type)
+        inside = [row for row in rows if _timestamp(row.get("collected_at")) >= cutoff]
+        if not inside:
+            continue
+        preceding = [row for row in rows if _timestamp(row.get("collected_at")) < cutoff]
+        preceding_is_near = preceding and (
+            cutoff - _timestamp(preceding[-1].get("collected_at"))
+            <= endpoint_tolerance
+        )
+        if preceding_is_near:
+            bounded.append(preceding[-1])
+        bounded.extend(inside)
+    return bounded
 
 
 def _statement_entries(data: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -378,8 +394,16 @@ def _classify_root_cause(
 
     selected_parameters = set(_json(run.get("selected_parameters"), []))
     if safety.get("temp_files_delta", 0) and "work_mem" in selected_parameters:
-        scores["configuration"] = max(scores["configuration"], 0.7)
-        details["configuration_signal"] = "new temporary files with work_mem in scope"
+        temp_bytes = _number(safety.get("temp_bytes_delta"))
+        scores["configuration"] = max(
+            scores["configuration"],
+            min(0.99, 0.97 + math.log10(max(temp_bytes, 1)) / 200),
+        )
+        details["configuration_signal"] = (
+            "temporary-file spill observed with work_mem in scope"
+        )
+        details["temp_files_delta"] = safety.get("temp_files_delta")
+        details["temp_bytes_delta"] = temp_bytes
     checkpoint = safety.get("checkpoint")
     if isinstance(checkpoint, dict) and _number(checkpoint.get("checkpoints_req")):
         if selected_parameters & {"max_wal_size", "min_wal_size", "checkpoint_completion_target"}:

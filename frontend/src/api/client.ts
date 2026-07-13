@@ -15,6 +15,7 @@ import type {
   WorkloadFingerprint,
   BaselineMeasurement,
   AdvisoryFinding,
+  TuningCandidate,
   EvidenceSnapshot,
   EvidenceListResponse,
   PlanDetail,
@@ -184,6 +185,12 @@ export const baselinesApi = {
   },
   listAdvisories(runId: string): Promise<AdvisoryFinding[]> {
     return request<AdvisoryFinding[]>(`/runs/${runId}/advisories`);
+  },
+};
+
+export const candidatesApi = {
+  list(runId: string): Promise<TuningCandidate[]> {
+    return request<TuningCandidate[]>(`/runs/${runId}/candidates`);
   },
 };
 

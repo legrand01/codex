@@ -16,6 +16,20 @@ The benchmark reports the current `work_mem`, concurrent active sessions,
 median execution time, temporary blocks read/written, and sort methods. Run it
 before and after an approved P0 plan to compare the same query under load.
 
+The full tuning-session path first records an immutable baseline, then proposes
+one bounded candidate at a time. Approve each candidate from its session page.
+The worker applies it, waits for the configured measurement window plus one
+collector interval, measures the same fingerprint and safety metrics, and then:
+
+- keeps the candidate only if it safely beats both baseline and best-so-far;
+- restores the last verified best value when it regresses or is inconclusive;
+- persists the score, deltas, coverage, variance, safety data, evidence links,
+  decision, and rollback result for the session report.
+
+Use the candidate history on the session Overview tab as the primary proof.
+After the session completes, also query the target setting or rerun the
+benchmark to confirm that the final live state matches the recorded best.
+
 Reset the setting to the spill-heavy baseline without deleting the sample data:
 
 ```bash

@@ -10,6 +10,7 @@ from backend.models.config import LoopConfig
 from backend.models.enums import PlanStatus, WorkflowStep
 from backend.services.audit_logger import AuditLogger, get_audit_logger
 from backend.services.baseline_measurement import capture_baseline
+from backend.services.candidate_optimizer import CandidateOptimizer, evaluate_candidate
 from backend.services.loop_worker import DBALoopWorker
 from backend.services.plan_execution import PlanExecutionService
 from backend.services.report_generator import ReportGenerator
@@ -133,40 +134,12 @@ class DurableRunOrchestrator:
         snapshot = await worker._capture_target_snapshot(run_id, host_id)
         if not snapshot.success:
             return await self._fail_run(run_id, snapshot.error or "Target snapshot failed")
-        pre_snapshot = snapshot.data["pre_change_snapshot"]
-        await self._set_run(run_id, "running", WorkflowStep.PROPOSE_PLAN)
-        proposed = await worker._propose_plan(
-            run_id,
-            host_id,
-            run["goal"],
-            pre_change_snapshot=pre_snapshot,
+        return await self._propose_next_candidate(
+            run,
+            baseline,
+            snapshot.data["pre_change_snapshot"],
+            config,
         )
-        if not proposed.success:
-            return await self._fail_run(run_id, proposed.error or "Plan generation failed")
-        if not proposed.data.get("is_actionable", True):
-            await self._complete_run(run_id, host_id)
-            return RunProcessResult("completed", "Diagnostic completed without a write plan")
-
-        await self._set_run(run_id, "running", WorkflowStep.SAFETY_CHECK)
-        safety = await worker._submit_to_guardrail(
-            run_id=run_id,
-            host_id=host_id,
-            proposed_changes=proposed.data["proposed_changes"],
-            rollback_instructions=proposed.data["rollback_instructions"],
-            pre_snapshot=pre_snapshot,
-            config=config,
-        )
-        if not safety.success:
-            async with self.pool.acquire() as conn:
-                await conn.execute(
-                    "UPDATE plans SET status = $2 WHERE id = $1",
-                    UUID(proposed.data["plan_id"]),
-                    PlanStatus.BLOCKED.value,
-                )
-            return await self._fail_run(run_id, safety.error or "Safety check failed")
-
-        await self._set_run(run_id, "waiting_approval", WorkflowStep.APPROVAL_GATE)
-        return RunProcessResult("waiting_approval", "Plan is waiting for authenticated approval")
 
     async def _advance_plan(
         self, run: Dict[str, Any], plan: Dict[str, Any], config: LoopConfig
@@ -174,6 +147,15 @@ class DurableRunOrchestrator:
         run_id = run["id"]
         host_id = run["host_id"]
         status = plan["status"]
+        optimizer = CandidateOptimizer(self.pool, audit_logger=self.audit_logger)
+        candidate = await optimizer.load_for_plan(plan["id"])
+        if candidate and candidate["decision"] in {
+            "kept",
+            "rolled_back",
+            "inconclusive",
+            "blocked",
+        }:
+            return await self._continue_candidate_search(run, config)
         if status == PlanStatus.PENDING_APPROVAL.value:
             await self._set_run(run_id, "waiting_approval", WorkflowStep.APPROVAL_GATE)
             return RunProcessResult("waiting_approval", "Plan is waiting for approval")
@@ -185,8 +167,14 @@ class DurableRunOrchestrator:
             PlanStatus.APPLY_FAILED.value,
             PlanStatus.ROLLBACK_FAILED.value,
         }:
+            if candidate:
+                await optimizer.mark_blocked(
+                    plan["id"], f"Plan stopped in terminal state {status}"
+                )
             return await self._fail_run(run_id, f"Plan stopped in terminal state {status}")
         if status == PlanStatus.ROLLED_BACK.value:
+            if candidate:
+                return await self._continue_candidate_search(run, config)
             return await self._fail_run(run_id, "Applied change was rolled back")
 
         proposed_changes = _json(plan["proposed_changes"], [])
@@ -255,6 +243,42 @@ class DurableRunOrchestrator:
                 details={"plan_id": str(plan["id"]), "verified_values": verified_values},
             )
 
+            if candidate:
+                await self._set_run(run_id, "running", WorkflowStep.MEASURE)
+                baseline = await self._load_baseline(run_id)
+                measurement = await optimizer.measure_candidate(candidate, run)
+                decision = evaluate_candidate(
+                    baseline,
+                    measurement,
+                    best_score_before=float(candidate["best_score_before"]),
+                    degradation_threshold_pct=float(run["degradation_threshold_pct"]),
+                    objective_guardrails=_json(run.get("objective_guardrails"), {}),
+                )
+                verification = {
+                    "configuration_verified": True,
+                    "verified_values": verified_values,
+                    "candidate_measurement": measurement,
+                    "decision": decision.decision,
+                    "decision_reason": decision.reason,
+                    "verified_at": datetime.now(timezone.utc).isoformat(),
+                }
+                async with self.pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE plans SET verification_result = $2::jsonb,
+                            verification_completed_at = NOW()
+                        WHERE id = $1
+                        """,
+                        plan["id"],
+                        json.dumps(verification),
+                    )
+                await self._set_run(run_id, "running", WorkflowStep.KEEP_ROLLBACK)
+                if decision.decision != "kept":
+                    await executor.rollback(host_id, pre_snapshot)
+                    await self._set_plan_status(plan["id"], PlanStatus.ROLLED_BACK)
+                await optimizer.persist_decision(candidate, decision)
+                return await self._continue_candidate_search(run, config)
+
             await self._set_run(run_id, "running", WorkflowStep.MEASURE)
             decision = await verify_and_decide(
                 run_id=run_id,
@@ -292,6 +316,66 @@ class DurableRunOrchestrator:
 
         return await self._fail_run(run_id, f"Unsupported recovery state {status}")
 
+    async def _propose_next_candidate(
+        self,
+        run: Dict[str, Any],
+        baseline: Dict[str, Any],
+        current_snapshot: Dict[str, Dict[str, Any]],
+        config: LoopConfig,
+    ) -> RunProcessResult:
+        """Create the next bounded candidate that passes the existing guardrails."""
+        optimizer = CandidateOptimizer(self.pool, audit_logger=self.audit_logger)
+        worker = DBALoopWorker(pool=self.pool, audit_logger=self.audit_logger)
+        while True:
+            await self._set_run(run["id"], "running", WorkflowStep.PROPOSE_PLAN)
+            proposal = await optimizer.propose_candidate(run, baseline, current_snapshot)
+            if proposal is None:
+                await self._complete_run(run["id"], run["host_id"])
+                return RunProcessResult(
+                    "completed",
+                    "Candidate search converged; the best verified configuration is active",
+                )
+            await self._set_run(run["id"], "running", WorkflowStep.SAFETY_CHECK)
+            safety = await worker._submit_to_guardrail(
+                run_id=run["id"],
+                host_id=run["host_id"],
+                proposed_changes=proposal["proposed_changes"],
+                rollback_instructions=proposal["rollback_instructions"],
+                pre_snapshot=proposal["pre_change_snapshot"],
+                config=config,
+            )
+            if safety.success:
+                await self._set_run(
+                    run["id"], "waiting_approval", WorkflowStep.APPROVAL_GATE
+                )
+                return RunProcessResult(
+                    "waiting_approval",
+                    f"Candidate {proposal['iteration']} is waiting for authenticated approval",
+                )
+            reason = safety.error or "Candidate safety check failed"
+            await self._set_plan_status(proposal["plan_id"], PlanStatus.BLOCKED)
+            await optimizer.mark_blocked(proposal["plan_id"], reason)
+            run = await self._load_run(run["id"])
+
+    async def _continue_candidate_search(
+        self, run: Dict[str, Any], config: LoopConfig
+    ) -> RunProcessResult:
+        """Continue from the currently active best configuration."""
+        run = await self._load_run(run["id"])
+        baseline = await self._load_baseline(run["id"])
+        worker = DBALoopWorker(pool=self.pool, audit_logger=self.audit_logger)
+        snapshot = await worker._capture_target_snapshot(run["id"], run["host_id"])
+        if not snapshot.success:
+            return await self._fail_run(
+                run["id"], snapshot.error or "Target snapshot failed between candidates"
+            )
+        return await self._propose_next_candidate(
+            run,
+            baseline,
+            snapshot.data["pre_change_snapshot"],
+            config,
+        )
+
     async def _load_run(self, run_id: UUID) -> Dict[str, Any]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow("SELECT * FROM loop_runs WHERE id = $1", run_id)
@@ -311,6 +395,15 @@ class DurableRunOrchestrator:
                 run_id,
             )
         return dict(row) if row else None
+
+    async def _load_baseline(self, run_id: UUID) -> Dict[str, Any]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM baseline_measurements WHERE run_id = $1", run_id
+            )
+        if row is None:
+            raise RuntimeError(f"Run {run_id} has no comparable baseline")
+        return dict(row)
 
     async def _load_metric_evidence(self, host_id: UUID) -> Dict[str, Any]:
         result: Dict[str, Any] = {}

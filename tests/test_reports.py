@@ -287,6 +287,45 @@ class TestReportGeneratorBuildMethods:
         assert summaries[1]["provenance"] == LABEL_AI_RECOMMENDATION
         assert summaries[1]["executable"] is False
 
+    def test_measured_candidate_is_a_verified_fact(self):
+        now = datetime.now(timezone.utc)
+        candidate = {
+            "id": uuid4(),
+            "plan_id": uuid4(),
+            "iteration": 1,
+            "domain_version": "p0-bounded-v1",
+            "parameter_values": '{"work_mem":"128kB"}',
+            "baseline_score": 100.0,
+            "best_score_before": 100.0,
+            "objective_score": 75.0,
+            "baseline_delta_pct": 25.0,
+            "best_delta_pct": 25.0,
+            "objective_formula": "sum(runtime) / sum(calls)",
+            "objective_direction": "minimize",
+            "metric_units": '{"objective_score":"ms"}',
+            "warmup_window_seconds": 0,
+            "measurement_window_seconds": 60,
+            "observed_measurement_window_seconds": 60.0,
+            "workload_coverage_pct": 98.0,
+            "runtime_variance_pct": 2.0,
+            "safety_metrics": "{}",
+            "safety_deltas": "{}",
+            "guardrail_violations": "[]",
+            "evidence_references": "[]",
+            "confidence_score": 0.9,
+            "decision": "kept",
+            "decision_reason": "Objective improved safely",
+            "measured_at": now,
+            "decided_at": now,
+        }
+
+        summaries = self.generator._build_candidate_summaries([candidate])
+
+        assert summaries[0]["parameter_values"] == {"work_mem": "128kB"}
+        assert summaries[0]["decision"] == "kept"
+        assert summaries[0]["provenance"] == LABEL_VERIFIED_FACT
+        assert "evidence_gap" not in summaries[0]
+
 
 # =============================================================================
 # Test outcome status determination

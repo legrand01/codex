@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   auditApi,
   baselinesApi,
+  candidatesApi,
   evidenceApi,
   fingerprintsApi,
   plansApi,
@@ -18,6 +19,7 @@ import type {
   EvidenceSnapshot,
   PlanDetail,
   RunDetail,
+  TuningCandidate,
   WorkloadFingerprint,
 } from '../api/types';
 import { useApi } from '../hooks/useApi';
@@ -86,16 +88,18 @@ interface SessionData {
   run: RunDetail;
   baseline: BaselineMeasurement | null;
   advisories: AdvisoryFinding[];
+  candidates: TuningCandidate[];
   plans: PlanDetail[];
   evidence: EvidenceSnapshot[];
   activity: AuditEntry[];
   report: DBAReport | null;
   refreshPlans: () => void;
+  refreshCandidates: () => void;
   refreshRun: () => void;
 }
 
 function OverviewTab({ data }: { data: SessionData }) {
-  const { run, baseline, advisories, plans, evidence, activity, report } = data;
+  const { run, baseline, advisories, candidates, plans, evidence, activity, report } = data;
   const stats = [
     ['Current step', run.current_step?.replace(/_/g, ' ') ?? 'Finished'],
     ['Iteration', `${run.current_iteration} of ${run.max_iterations}`],
@@ -140,6 +144,21 @@ function OverviewTab({ data }: { data: SessionData }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>{advisory.title}</strong><span style={{ color: '#92400e', fontSize: '0.72rem', fontWeight: 700 }}>ADVISORY · NON-EXECUTABLE</span></div>
       <ul style={{ marginBottom: 0 }}>{advisory.recommendations.map((recommendation) => <li key={recommendation} style={{ marginTop: '5px' }}>{recommendation}</li>)}</ul>
     </div>)}
+    {candidates.length > 0 && <div style={card}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '10px' }}><div><div style={subtle}>Measured candidate search</div><strong>{candidates.length} bounded iteration(s)</strong></div><span style={subtle}>Domain {candidates[0].domain_version}</span></div>
+      <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+        <thead><tr>{['Iteration', 'Values', 'Score', 'vs baseline', 'vs best', 'Coverage', 'Decision'].map((label) => <th key={label} style={{ textAlign: 'left', padding: '7px', borderBottom: '1px solid #d1d5db' }}>{label}</th>)}</tr></thead>
+        <tbody>{candidates.map((candidate) => <tr key={candidate.id}>
+          <td style={{ padding: '7px', borderBottom: '1px solid #e5e7eb' }}>{candidate.iteration}</td>
+          <td style={{ padding: '7px', borderBottom: '1px solid #e5e7eb' }}>{Object.entries(candidate.parameter_values).map(([name, value]) => <code key={name} style={{ display: 'block' }}>{name}={value}</code>)}</td>
+          <td style={{ padding: '7px', borderBottom: '1px solid #e5e7eb' }}>{candidate.objective_score === null ? 'Pending' : `${candidate.objective_score.toFixed(3)} ${candidate.metric_units.objective_score ?? ''}`}</td>
+          <td style={{ padding: '7px', borderBottom: '1px solid #e5e7eb', color: (candidate.baseline_delta_pct ?? 0) > 0 ? '#15803d' : '#b91c1c' }}>{candidate.baseline_delta_pct === null ? '—' : `${candidate.baseline_delta_pct.toFixed(1)}%`}</td>
+          <td style={{ padding: '7px', borderBottom: '1px solid #e5e7eb', color: (candidate.best_delta_pct ?? 0) > 0 ? '#15803d' : '#b91c1c' }}>{candidate.best_delta_pct === null ? '—' : `${candidate.best_delta_pct.toFixed(1)}%`}</td>
+          <td style={{ padding: '7px', borderBottom: '1px solid #e5e7eb' }}>{candidate.workload_coverage_pct === null ? '—' : `${candidate.workload_coverage_pct.toFixed(1)}%`}</td>
+          <td style={{ padding: '7px', borderBottom: '1px solid #e5e7eb' }}><strong style={{ textTransform: 'capitalize', color: candidate.decision === 'kept' ? '#15803d' : candidate.decision === 'pending_approval' || candidate.decision === 'measuring' ? '#b45309' : '#b91c1c' }}>{candidate.decision.replace(/_/g, ' ')}</strong>{candidate.decision_reason && <div style={{ ...subtle, maxWidth: '340px' }}>{candidate.decision_reason}</div>}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </div>}
     {report && <div style={card}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
         <div><div style={subtle}>Measured outcome</div><strong style={{ textTransform: 'capitalize' }}>{report.outcome_status.replace(/_/g, ' ')}</strong></div>
@@ -168,6 +187,7 @@ function PlansTab({ data, openEvidence }: { data: SessionData; openEvidence: (id
       setMessage(action === 'approve' ? 'Plan approved and returned to the worker.' : action === 'reject' ? 'Plan rejected.' : 'Rollback initiated.');
       setRejectReason('');
       data.refreshPlans();
+      data.refreshCandidates();
       data.refreshRun();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : `Unable to ${action} plan`);
@@ -374,6 +394,7 @@ function SessionWorkspace() {
   const reportRequest = useApi<DBAReport>(() => reportsApi.getReport(runId), [runId]);
   const baselineRequest = useApi<BaselineMeasurement>(() => baselinesApi.get(runId), [runId]);
   const advisoriesRequest = useApi<AdvisoryFinding[]>(() => baselinesApi.listAdvisories(runId), [runId]);
+  const candidatesRequest = useApi<TuningCandidate[]>(() => candidatesApi.list(runId), [runId]);
 
   const selectTab = (next: Tab) => setSearchParams(next === 'overview' ? {} : { tab: next });
   const openEvidence = (snapshotId?: string) => {
@@ -388,11 +409,13 @@ function SessionWorkspace() {
     run,
     baseline: baselineRequest.data,
     advisories: advisoriesRequest.data ?? [],
+    candidates: candidatesRequest.data ?? [],
     plans: plansRequest.data ?? [],
     evidence: evidenceRequest.data ?? [],
     activity: activityRequest.data ?? [],
     report: reportRequest.data,
     refreshPlans: plansRequest.refetch,
+    refreshCandidates: candidatesRequest.refetch,
     refreshRun: runRequest.refetch,
   };
   const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading;

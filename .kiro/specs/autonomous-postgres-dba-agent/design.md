@@ -479,6 +479,30 @@ reinforcement-learning strategies can be introduced later behind the same
 interface. The correctness boundary is the repeatable measurement protocol,
 not the candidate-generation algorithm.
 
+The P0 implementation uses domain version `p0-bounded-v1`. Each supported
+setting has a typed `multipliers` or `absolute` domain with minimum and maximum
+bounds. Candidate generation intersects that domain with the enrolled host's
+guardrail allowlist and its maximum-deviation limit. The ordering is
+deterministic, the immutable baseline value is the expansion anchor, and values
+already attempted by the session are never proposed again.
+
+Each candidate is durably stored in `tuning_candidates` with its session,
+plan, iteration, domain version, parameter values, exact pre-change snapshot,
+baseline and best-so-far scores, objective contract, measurement windows,
+coverage, variance, safety metrics and deltas, evidence references, decision,
+and reason. The full comparable measurement payload is stored before the
+decision. A restarted worker therefore resumes the same measurement or decision
+without silently recapturing a different evidence window.
+
+A candidate is kept only when it beats both the immutable baseline and the
+best-so-far by the configured minimum improvement and all comparability and
+safety checks pass. Incomplete windows, changed fingerprint membership,
+coverage loss, excessive variance, deadlocks, waiting locks, replication lag,
+resource regression, or transaction-rate regression make the result
+inconclusive or rolled back. Every non-kept candidate restores its exact
+pre-change snapshot before the next proposal, which is the current verified
+best state (or the baseline when no candidate has been kept).
+
 Before candidate generation, a root-cause gate classifies configuration,
 query-plan/index, lock, vacuum/bloat, storage/CPU, connection-pressure, and
 insufficient-evidence signals. Configuration search proceeds only when a

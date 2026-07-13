@@ -168,6 +168,27 @@ class ReportGenerator:
             )
         return (dict(baseline) if baseline else None, [dict(row) for row in advisories])
 
+    async def _fetch_candidates(self, run_id: UUID) -> List[Dict]:
+        """Fetch every durable candidate measurement and decision."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, plan_id, iteration, domain_version, parameter_values,
+                       baseline_score, best_score_before, objective_score,
+                       baseline_delta_pct, best_delta_pct, objective_formula,
+                       objective_direction, metric_units, warmup_window_seconds,
+                       measurement_window_seconds,
+                       observed_measurement_window_seconds,
+                       workload_coverage_pct, runtime_variance_pct,
+                       safety_metrics, safety_deltas, guardrail_violations,
+                       evidence_references, confidence_score, decision,
+                       decision_reason, measured_at, decided_at
+                FROM tuning_candidates WHERE run_id = $1 ORDER BY iteration
+                """,
+                run_id,
+            )
+        return [dict(row) for row in rows]
+
     def _build_baseline_summaries(
         self, baseline: Optional[Dict], advisories: List[Dict]
     ) -> List[Dict]:
@@ -212,6 +233,63 @@ class ReportGenerator:
                 }
             )
         return items
+
+    def _build_candidate_summaries(self, candidates: List[Dict]) -> List[Dict]:
+        """Represent proposed and measured candidates with honest provenance."""
+        summaries = []
+        for candidate in candidates:
+            measured = candidate.get("measured_at") is not None
+            summary = {
+                "candidate_id": str(candidate["id"]),
+                "plan_id": str(candidate["plan_id"]),
+                "evidence_type": "candidate_measurement",
+                "iteration": candidate["iteration"],
+                "domain_version": candidate["domain_version"],
+                "parameter_values": _decode_json(candidate["parameter_values"], {}),
+                "baseline_score": candidate["baseline_score"],
+                "best_score_before": candidate["best_score_before"],
+                "objective_score": candidate["objective_score"],
+                "baseline_delta_pct": candidate["baseline_delta_pct"],
+                "best_delta_pct": candidate["best_delta_pct"],
+                "objective_formula": candidate["objective_formula"],
+                "objective_direction": candidate["objective_direction"],
+                "metric_units": _decode_json(candidate["metric_units"], {}),
+                "warmup_window_seconds": candidate["warmup_window_seconds"],
+                "measurement_window_seconds": candidate["measurement_window_seconds"],
+                "observed_measurement_window_seconds": candidate[
+                    "observed_measurement_window_seconds"
+                ],
+                "workload_coverage_pct": candidate["workload_coverage_pct"],
+                "runtime_variance_pct": candidate["runtime_variance_pct"],
+                "safety_metrics": _decode_json(candidate["safety_metrics"], {}),
+                "safety_deltas": _decode_json(candidate["safety_deltas"], {}),
+                "guardrail_violations": _decode_json(
+                    candidate["guardrail_violations"], []
+                ),
+                "evidence_references": _decode_json(
+                    candidate["evidence_references"], []
+                ),
+                "confidence_score": candidate["confidence_score"],
+                "decision": candidate["decision"],
+                "decision_reason": candidate["decision_reason"],
+                "measured_at": (
+                    candidate["measured_at"].isoformat()
+                    if candidate.get("measured_at")
+                    else None
+                ),
+                "decided_at": (
+                    candidate["decided_at"].isoformat()
+                    if candidate.get("decided_at")
+                    else None
+                ),
+                "provenance": (
+                    LABEL_VERIFIED_FACT if measured else LABEL_AI_RECOMMENDATION
+                ),
+            }
+            if not measured:
+                summary["evidence_gap"] = "Candidate has not completed measurement"
+            summaries.append(summary)
+        return summaries
 
     def _build_evidence_summaries(self, evidence_rows: List[Dict]) -> List[Dict]:
         """
@@ -484,12 +562,14 @@ class ReportGenerator:
             plans = await self._fetch_plans(run_id)
             audit_entries = await self._fetch_audit_entries(run_id)
             baseline, advisories = await self._fetch_baseline_context(run_id)
+            candidates = await self._fetch_candidates(run_id)
 
             # Build report sections
             evidence_summaries = self._build_evidence_summaries(evidence_rows)
             evidence_summaries.extend(
                 self._build_baseline_summaries(baseline, advisories)
             )
+            evidence_summaries.extend(self._build_candidate_summaries(candidates))
             plans_proposed = self._build_plans_proposed(plans)
             approval_decisions = self._build_approval_decisions(plans, audit_entries)
             applied_changes = self._build_applied_changes(plans)

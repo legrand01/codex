@@ -266,6 +266,43 @@ export interface AdvisoryFinding {
   created_at: string;
 }
 
+export interface TuningCandidate {
+  id: string;
+  run_id: string;
+  host_id: string;
+  plan_id: string;
+  plan_status: PlanStatus;
+  iteration: number;
+  domain_version: string;
+  parameter_values: Record<string, string>;
+  baseline_score: number;
+  best_score_before: number;
+  objective_score: number | null;
+  baseline_delta_pct: number | null;
+  best_delta_pct: number | null;
+  objective_formula: string;
+  objective_direction: 'minimize' | 'maximize';
+  metric_units: Record<string, string>;
+  warmup_window_seconds: number;
+  measurement_window_seconds: number;
+  observed_measurement_window_seconds: number | null;
+  workload_coverage_pct: number | null;
+  runtime_variance_pct: number | null;
+  safety_metrics: Record<string, unknown>;
+  safety_deltas: Record<string, number | null>;
+  guardrail_violations: string[];
+  evidence_references: Array<Record<string, unknown>>;
+  confidence_score: number | null;
+  decision: 'pending_approval' | 'blocked' | 'measuring' | 'kept' | 'rolled_back' | 'inconclusive' | 'rejected';
+  decision_reason: string | null;
+  warmup_started_at: string | null;
+  warmup_completed_at: string | null;
+  measurement_started_at: string | null;
+  measured_at: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
 export interface EvidenceSnapshot {
   id: string;
   run_id: string;

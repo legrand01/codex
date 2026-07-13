@@ -497,6 +497,16 @@ async def reject_plan(
         )
         await db.execute(
             """
+            UPDATE tuning_candidates
+            SET decision = 'rejected', decision_reason = $2, decided_at = $3
+            WHERE plan_id = $1
+            """,
+            plan_id,
+            trimmed_reason,
+            rejected_at,
+        )
+        await db.execute(
+            """
             UPDATE loop_runs
             SET status = 'failed', failure_reason = $2, completed_at = NOW()
             WHERE id = $1
