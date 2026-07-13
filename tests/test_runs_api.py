@@ -401,6 +401,17 @@ class TestGetRunStatus:
                 "current_step": "observe",
                 "current_iteration": 1,
                 "max_iterations": 10,
+                "host_id": uuid4(),
+                "hostname": "postgres-lab",
+                "database_name": "appdb",
+                "tuning_target": "transactions_per_second",
+                "tuning_mode": "reload_only",
+                "selected_parameters": '["work_mem", "random_page_cost"]',
+                "approval_policy": "per_candidate",
+                "warmup_window_seconds": 90,
+                "measurement_window_seconds": 600,
+                "objective_guardrails": '{"cpu_utilization_pct": 85}',
+                "configuration_backend": "alter_system",
                 "started_at": now - timedelta(seconds=30),
                 "last_step_transition_at": now - timedelta(seconds=5),
                 "failure_reason": None,
@@ -426,6 +437,10 @@ class TestGetRunStatus:
         assert data["status"] == "running"
         assert data["current_step"] == "observe"
         assert data["elapsed_seconds"] > 0
+        assert data["database_name"] == "appdb"
+        assert data["selected_parameters"] == ["work_mem", "random_page_cost"]
+        assert data["measurement_window_seconds"] == 600
+        assert data["objective_guardrails"]["cpu_utilization_pct"] == 85
 
     @pytest.mark.asyncio
     async def test_get_run_status_not_found(self, api_client):

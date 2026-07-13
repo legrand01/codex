@@ -38,6 +38,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["runs"])
 
 
+def _parse_json_list(value) -> List[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return [str(item) for item in parsed] if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+def _parse_json_dict(value) -> Dict[str, float]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
 # --- Request/Response Models ---
 
 
@@ -90,6 +114,13 @@ class RunStatusResponse(BaseModel):
     goal: str
     tuning_target: str = TuningTarget.SYSTEM_WIDE_AQR.value
     tuning_mode: str = TuningMode.RELOAD_ONLY.value
+    workload_fingerprint_id: Optional[UUID] = None
+    selected_parameters: List[str] = Field(default_factory=list)
+    approval_policy: str = "per_candidate"
+    warmup_window_seconds: int = 60
+    measurement_window_seconds: int = 300
+    objective_guardrails: Dict[str, float] = Field(default_factory=dict)
+    configuration_backend: str = "alter_system"
     baseline_score: Optional[float] = None
     best_score: Optional[float] = None
     status: str
@@ -392,6 +423,10 @@ async def get_run_status(
         """
         SELECT r.id, r.host_id, h.hostname, r.database_name, r.goal,
                r.tuning_target, r.tuning_mode, r.baseline_score, r.best_score,
+               r.workload_fingerprint_id, r.selected_parameters,
+               r.approval_policy, r.warmup_window_seconds,
+               r.measurement_window_seconds, r.objective_guardrails,
+               r.configuration_backend,
                r.status, r.current_step, r.current_iteration,
                r.max_iterations, r.started_at, r.completed_at,
                r.last_step_transition_at, r.failure_reason
@@ -436,6 +471,13 @@ async def get_run_status(
         goal=row["goal"],
         tuning_target=row.get("tuning_target", TuningTarget.SYSTEM_WIDE_AQR.value),
         tuning_mode=row.get("tuning_mode", TuningMode.RELOAD_ONLY.value),
+        workload_fingerprint_id=row.get("workload_fingerprint_id"),
+        selected_parameters=_parse_json_list(row.get("selected_parameters")),
+        approval_policy=row.get("approval_policy", "per_candidate"),
+        warmup_window_seconds=row.get("warmup_window_seconds", 60),
+        measurement_window_seconds=row.get("measurement_window_seconds", 300),
+        objective_guardrails=_parse_json_dict(row.get("objective_guardrails")),
+        configuration_backend=row.get("configuration_backend", "alter_system"),
         baseline_score=row.get("baseline_score"),
         best_score=row.get("best_score"),
         status=row["status"],

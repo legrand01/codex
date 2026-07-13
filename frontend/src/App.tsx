@@ -66,19 +66,16 @@ function App() {
   }
 
   return (
-    <Router>
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <DemoModeBanner active={demoActive} />
       <div className="app">
         <header className="app-header">
           <h1 style={{ margin: 0, fontSize: '1.1rem' }}>Autonomous Postgres DBA Agent</h1>
           <nav style={{ display: 'flex', alignItems: 'center' }}>
             <NavLink to="/" style={navLinkStyle} end>Fleet</NavLink>
-            <NavLink to="/runs" style={navLinkStyle}>Runs</NavLink>
-            <NavLink to="/plans" style={navLinkStyle}>Plans</NavLink>
-            <NavLink to="/evidence" style={navLinkStyle}>Evidence</NavLink>
-            <NavLink to="/rollback" style={navLinkStyle}>Rollback</NavLink>
+            <NavLink to="/runs" style={navLinkStyle}>Tuning</NavLink>
+            <NavLink to="/plans" style={navLinkStyle}>Approvals</NavLink>
             <NavLink to="/audit" style={navLinkStyle}>Audit</NavLink>
-            <NavLink to="/reports" style={navLinkStyle}>Reports</NavLink>
             <button onClick={() => {
               setApiToken('');
               setAuthenticated(false);

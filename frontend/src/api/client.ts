@@ -6,6 +6,7 @@ import type {
   HostSummary,
   FleetListResponse,
   RunSummary,
+  RunDetail,
   RunListResponse,
   RunFilters,
   TuningMode,
@@ -108,8 +109,8 @@ export const runsApi = {
   async listRuns(filters: RunFilters = {}): Promise<RunSummary[]> {
     return (await this.listRunHistory(filters)).runs;
   },
-  getRunStatus(runId: string): Promise<RunSummary> {
-    return request<RunSummary>(`/runs/${runId}`);
+  getRunStatus(runId: string): Promise<RunDetail> {
+    return request<RunDetail>(`/runs/${runId}`);
   },
   startRun(data: StartRunRequest): Promise<StartRunResponse> {
     return request<StartRunResponse>('/runs/', {

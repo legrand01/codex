@@ -91,6 +91,19 @@ export interface RunSummary {
   elapsed_seconds: number;
 }
 
+export interface RunDetail extends RunSummary {
+  workload_fingerprint_id: string | null;
+  selected_parameters: string[];
+  approval_policy: 'per_candidate' | 'final_only';
+  warmup_window_seconds: number;
+  measurement_window_seconds: number;
+  objective_guardrails: Record<string, number>;
+  configuration_backend: string;
+  max_iterations: number;
+  failure_reason: string | null;
+  guardrail_violation: Record<string, unknown> | null;
+}
+
 export interface RunListResponse {
   runs: RunSummary[];
   total: number;

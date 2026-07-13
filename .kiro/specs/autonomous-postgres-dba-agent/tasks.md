@@ -607,7 +607,7 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     - Run capability/preflight checks before enabling session creation
     - _Requirements: 16.1, 17.1, 18.5, 18.6, 18.7_
 
-  - [ ] 22.3 Implement the session-centric React workspace
+  - [~] 22.3 Implement the session-centric React workspace
     - Create `/tuning/:runId` with persistent session header
     - Add Overview, Configuration, Workload, Evidence, Activity, and Report tabs
     - Pass runId from route context to every child request; remove UUID entry forms from normal navigation
