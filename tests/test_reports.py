@@ -244,6 +244,49 @@ class TestReportGeneratorBuildMethods:
         results = self.generator._build_verification_results(audit_entries)
         assert len(results) == 0
 
+    def test_build_baseline_and_advisory_summaries_preserves_provenance(self):
+        """Measured baseline is fact; its non-executable next step is advice."""
+        baseline_id = uuid4()
+        advisory_id = uuid4()
+        captured_at = datetime.now(timezone.utc)
+        baseline = {
+            "id": baseline_id,
+            "status": "advisory_only",
+            "objective_type": "recommended_fingerprint",
+            "objective_formula": "sum(runtime) / sum(calls)",
+            "objective_direction": "minimize",
+            "objective_score": 25.02,
+            "metric_units": json.dumps({"objective_score": "ms"}),
+            "workload_coverage_pct": 99.54,
+            "runtime_variance_pct": 0.07,
+            "root_cause_category": "query_index",
+            "root_cause_confidence": 0.76,
+            "root_cause_summary": "A slow statement family dominates runtime.",
+            "warnings": json.dumps([]),
+            "captured_at": captured_at,
+        }
+        advisories = [
+            {
+                "id": advisory_id,
+                "category": "query_index",
+                "severity": "warning",
+                "title": "Inspect the dominant statement",
+                "summary": "{}",
+                "recommendations": json.dumps(["Capture EXPLAIN ANALYZE"]),
+                "evidence_references": json.dumps([{"snapshot_id": "snapshot-1"}]),
+                "executable": False,
+                "created_at": captured_at,
+            }
+        ]
+
+        summaries = self.generator._build_baseline_summaries(baseline, advisories)
+
+        assert summaries[0]["baseline_id"] == str(baseline_id)
+        assert summaries[0]["provenance"] == LABEL_VERIFIED_FACT
+        assert summaries[1]["advisory_id"] == str(advisory_id)
+        assert summaries[1]["provenance"] == LABEL_AI_RECOMMENDATION
+        assert summaries[1]["executable"] is False
+
 
 # =============================================================================
 # Test outcome status determination

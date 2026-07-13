@@ -225,6 +225,47 @@ export interface WorkloadFingerprint {
   members: FingerprintMember[];
 }
 
+export interface BaselineMeasurement {
+  id: string;
+  run_id: string;
+  host_id: string;
+  workload_fingerprint_id: string | null;
+  status: 'ready' | 'paused' | 'advisory_only';
+  objective_type: TuningTarget;
+  objective_formula: string;
+  objective_direction: 'minimize' | 'maximize';
+  objective_score: number | null;
+  metric_units: Record<string, string>;
+  fingerprint_membership: Array<Record<string, unknown>>;
+  warmup_window_seconds: number;
+  requested_measurement_window_seconds: number;
+  observed_measurement_window_seconds: number;
+  workload_coverage_pct: number;
+  runtime_variance_pct: number | null;
+  safety_metrics: Record<string, unknown>;
+  evidence_references: Array<Record<string, unknown>>;
+  root_cause_category: string;
+  root_cause_confidence: number;
+  root_cause_summary: string;
+  root_cause_details: Record<string, unknown>;
+  warnings: string[];
+  captured_at: string;
+}
+
+export interface AdvisoryFinding {
+  id: string;
+  run_id: string;
+  host_id: string;
+  category: string;
+  severity: 'info' | 'warning' | 'critical';
+  title: string;
+  summary: string;
+  recommendations: string[];
+  evidence_references: Array<Record<string, unknown>>;
+  executable: false;
+  created_at: string;
+}
+
 export interface EvidenceSnapshot {
   id: string;
   run_id: string;

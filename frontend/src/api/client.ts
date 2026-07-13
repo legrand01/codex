@@ -13,6 +13,8 @@ import type {
   TuningPreflight,
   FingerprintDiagnostics,
   WorkloadFingerprint,
+  BaselineMeasurement,
+  AdvisoryFinding,
   EvidenceSnapshot,
   EvidenceListResponse,
   PlanDetail,
@@ -172,6 +174,16 @@ export const fingerprintsApi = {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  },
+};
+
+// Baseline measurement and advisory API
+export const baselinesApi = {
+  get(runId: string): Promise<BaselineMeasurement> {
+    return request<BaselineMeasurement>(`/runs/${runId}/baseline`);
+  },
+  listAdvisories(runId: string): Promise<AdvisoryFinding[]> {
+    return request<AdvisoryFinding[]>(`/runs/${runId}/advisories`);
   },
 };
 

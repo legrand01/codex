@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   auditApi,
+  baselinesApi,
   evidenceApi,
   fingerprintsApi,
   plansApi,
@@ -11,6 +12,8 @@ import {
 } from '../api/client';
 import type {
   AuditEntry,
+  AdvisoryFinding,
+  BaselineMeasurement,
   DBAReport,
   EvidenceSnapshot,
   PlanDetail,
@@ -81,6 +84,8 @@ function JsonItems({ items, empty }: { items: Record<string, unknown>[]; empty: 
 
 interface SessionData {
   run: RunDetail;
+  baseline: BaselineMeasurement | null;
+  advisories: AdvisoryFinding[];
   plans: PlanDetail[];
   evidence: EvidenceSnapshot[];
   activity: AuditEntry[];
@@ -90,7 +95,7 @@ interface SessionData {
 }
 
 function OverviewTab({ data }: { data: SessionData }) {
-  const { run, plans, evidence, activity, report } = data;
+  const { run, baseline, advisories, plans, evidence, activity, report } = data;
   const stats = [
     ['Current step', run.current_step?.replace(/_/g, ' ') ?? 'Finished'],
     ['Iteration', `${run.current_iteration} of ${run.max_iterations}`],
@@ -117,6 +122,24 @@ function OverviewTab({ data }: { data: SessionData }) {
     {run.failure_reason && <div style={{ ...card, borderColor: '#fecaca', background: '#fef2f2', color: '#991b1b' }}>
       <strong>Session stopped:</strong> {run.failure_reason}
     </div>}
+    {baseline && <div style={{ ...card, borderColor: baseline.status === 'ready' ? '#bbf7d0' : '#fed7aa' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'start' }}>
+        <div><div style={subtle}>Comparable baseline</div><strong style={{ textTransform: 'capitalize' }}>{baseline.root_cause_category.replace(/_/g, ' ')}</strong><p style={{ margin: '5px 0 0' }}>{baseline.root_cause_summary}</p></div>
+        <strong style={{ color: baseline.status === 'ready' ? '#15803d' : '#b45309', textTransform: 'uppercase', fontSize: '0.76rem' }}>{baseline.status.replace(/_/g, ' ')}</strong>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: '10px', marginTop: '12px' }}>
+        <div><div style={subtle}>Objective score</div><strong>{baseline.objective_score === null ? 'Unavailable' : baseline.objective_score.toFixed(3)} {baseline.metric_units.objective_score ?? ''}</strong></div>
+        <div><div style={subtle}>Coverage</div><strong>{baseline.workload_coverage_pct.toFixed(1)}%</strong></div>
+        <div><div style={subtle}>Observed window</div><strong>{Math.round(baseline.observed_measurement_window_seconds)}s / {baseline.requested_measurement_window_seconds}s</strong></div>
+        <div><div style={subtle}>Confidence</div><strong>{Math.round(baseline.root_cause_confidence * 100)}%</strong></div>
+      </div>
+      <div style={{ ...subtle, marginTop: '10px' }}><strong>Formula:</strong> {baseline.objective_formula} · {baseline.objective_direction}</div>
+      {baseline.warnings.map((warning) => <div key={warning} style={{ color: '#92400e', marginTop: '6px', fontSize: '0.8rem' }}>! {warning}</div>)}
+    </div>}
+    {advisories.map((advisory) => <div key={advisory.id} style={{ ...card, borderColor: advisory.severity === 'critical' ? '#fecaca' : '#fde68a', background: advisory.severity === 'critical' ? '#fef2f2' : '#fffbeb' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>{advisory.title}</strong><span style={{ color: '#92400e', fontSize: '0.72rem', fontWeight: 700 }}>ADVISORY · NON-EXECUTABLE</span></div>
+      <ul style={{ marginBottom: 0 }}>{advisory.recommendations.map((recommendation) => <li key={recommendation} style={{ marginTop: '5px' }}>{recommendation}</li>)}</ul>
+    </div>)}
     {report && <div style={card}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
         <div><div style={subtle}>Measured outcome</div><strong style={{ textTransform: 'capitalize' }}>{report.outcome_status.replace(/_/g, ' ')}</strong></div>
@@ -349,6 +372,8 @@ function SessionWorkspace() {
   const evidenceRequest = useApi<EvidenceSnapshot[]>(() => evidenceApi.listEvidence(runId), [runId]);
   const activityRequest = useApi<AuditEntry[]>(() => auditApi.getAuditLog(runId), [runId]);
   const reportRequest = useApi<DBAReport>(() => reportsApi.getReport(runId), [runId]);
+  const baselineRequest = useApi<BaselineMeasurement>(() => baselinesApi.get(runId), [runId]);
+  const advisoriesRequest = useApi<AdvisoryFinding[]>(() => baselinesApi.listAdvisories(runId), [runId]);
 
   const selectTab = (next: Tab) => setSearchParams(next === 'overview' ? {} : { tab: next });
   const openEvidence = (snapshotId?: string) => {
@@ -361,6 +386,8 @@ function SessionWorkspace() {
   const run = runRequest.data;
   const data: SessionData = {
     run,
+    baseline: baselineRequest.data,
+    advisories: advisoriesRequest.data ?? [],
     plans: plansRequest.data ?? [],
     evidence: evidenceRequest.data ?? [],
     activity: activityRequest.data ?? [],

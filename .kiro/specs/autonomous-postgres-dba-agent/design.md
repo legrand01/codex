@@ -484,6 +484,16 @@ query-plan/index, lock, vacuum/bloat, storage/CPU, connection-pressure, and
 insufficient-evidence signals. Configuration search proceeds only when a
 configuration lever is plausible. Query and index findings are presented as a
 separate advisory track and remain non-executable in the current P0 boundary.
+The first baseline for a session is immutable. Its objective formula, direction,
+units, fingerprint membership, warm-up and requested/observed windows, workload
+coverage, variance, safety metrics, evidence endpoints, and root-cause result are
+stored together. At least 80% of the requested window must be observed, and the
+selected fingerprint must remain measurement-ready; otherwise the session pauses
+without reading or writing target configuration. Non-configuration diagnoses
+complete as `advisory_only`, persist recommendations with `executable = FALSE`,
+and create no tuning plan. Monotonic PostgreSQL statistics are converted to
+first/last counter deltas inside the requested trailing window, so historical
+activity before the baseline cannot bias later candidate comparisons.
 
 ### 9. Configuration Backend Router
 
@@ -681,6 +691,52 @@ CREATE TABLE workload_fingerprint_members (
     last_seen_at TIMESTAMPTZ,
     ordinal INTEGER NOT NULL,
     PRIMARY KEY (fingerprint_id, query_id)
+);
+
+-- One immutable, comparable baseline per tuning session
+CREATE TABLE baseline_measurements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    run_id UUID NOT NULL UNIQUE REFERENCES loop_runs(id) ON DELETE CASCADE,
+    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    workload_fingerprint_id UUID REFERENCES workload_fingerprints(id),
+    status VARCHAR(30) NOT NULL CHECK (status IN ('ready', 'paused', 'advisory_only')),
+    objective_type VARCHAR(40) NOT NULL,
+    objective_formula TEXT NOT NULL,
+    objective_direction VARCHAR(10) NOT NULL CHECK (objective_direction IN ('minimize', 'maximize')),
+    objective_score DOUBLE PRECISION,
+    metric_units JSONB NOT NULL,
+    fingerprint_membership JSONB NOT NULL,
+    warmup_window_seconds INTEGER NOT NULL,
+    requested_measurement_window_seconds INTEGER NOT NULL,
+    observed_measurement_window_seconds DOUBLE PRECISION NOT NULL,
+    workload_coverage_pct DOUBLE PRECISION NOT NULL,
+    runtime_variance_pct DOUBLE PRECISION,
+    safety_metrics JSONB NOT NULL,
+    evidence_references JSONB NOT NULL,
+    root_cause_category VARCHAR(30) NOT NULL,
+    root_cause_confidence DOUBLE PRECISION NOT NULL,
+    root_cause_summary TEXT NOT NULL,
+    root_cause_details JSONB NOT NULL,
+    warnings JSONB NOT NULL,
+    captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Diagnostic next steps are deliberately outside the executable plan model
+CREATE TABLE advisory_findings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    run_id UUID NOT NULL REFERENCES loop_runs(id) ON DELETE CASCADE,
+    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    category VARCHAR(30) NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    summary TEXT NOT NULL,
+    recommendations JSONB NOT NULL,
+    evidence_references JSONB NOT NULL,
+    executable BOOLEAN NOT NULL DEFAULT FALSE CHECK (executable = FALSE),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (run_id, category)
 );
 
 -- Candidate configurations measured within a tuning session

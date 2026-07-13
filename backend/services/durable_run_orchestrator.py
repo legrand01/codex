@@ -9,6 +9,7 @@ from uuid import UUID
 from backend.models.config import LoopConfig
 from backend.models.enums import PlanStatus, WorkflowStep
 from backend.services.audit_logger import AuditLogger, get_audit_logger
+from backend.services.baseline_measurement import capture_baseline
 from backend.services.loop_worker import DBALoopWorker
 from backend.services.plan_execution import PlanExecutionService
 from backend.services.report_generator import ReportGenerator
@@ -66,13 +67,6 @@ class DurableRunOrchestrator:
             return await self._fail_run(run_id, evidence.error or "Evidence collection failed")
 
         await self._set_run(run_id, "running", WorkflowStep.SNAPSHOT)
-        snapshot = await worker._capture_target_snapshot(run_id, host_id)
-        if not snapshot.success:
-            return await self._fail_run(run_id, snapshot.error or "Target snapshot failed")
-        pre_snapshot = snapshot.data["pre_change_snapshot"]
-
-        # The planner performs the rule-based diagnosis while constructing the
-        # candidate plan; persist the real state transition before invoking it.
         await self._set_run(run_id, "running", WorkflowStep.DIAGNOSE)
         await self.audit_logger.log(
             run_id=run_id,
@@ -82,6 +76,64 @@ class DurableRunOrchestrator:
             target_host_id=host_id,
             result="success",
         )
+        try:
+            baseline = await capture_baseline(run_id, self.pool)
+        except Exception as exc:
+            return await self._fail_run(
+                run_id, f"Comparable baseline measurement failed: {exc}"
+            )
+        baseline_status = baseline["status"]
+        root_cause = baseline["root_cause_category"]
+        await self.audit_logger.log(
+            run_id=run_id,
+            actor_type="system",
+            actor_name="baseline_measurement",
+            action_type="baseline_captured",
+            target_host_id=host_id,
+            result="success" if baseline_status == "ready" else "blocked",
+            result_reason=baseline["root_cause_summary"],
+            details={
+                "baseline_id": str(baseline["id"]),
+                "status": baseline_status,
+                "objective_type": baseline["objective_type"],
+                "objective_score": baseline["objective_score"],
+                "workload_coverage_pct": baseline["workload_coverage_pct"],
+                "runtime_variance_pct": baseline["runtime_variance_pct"],
+                "root_cause_category": root_cause,
+            },
+        )
+        if baseline_status != "ready":
+            action = (
+                "baseline_paused"
+                if baseline_status == "paused"
+                else "non_configuration_advisory_created"
+            )
+            await self.audit_logger.log(
+                run_id=run_id,
+                actor_type="system",
+                actor_name="baseline_measurement",
+                action_type=action,
+                target_host_id=host_id,
+                result="blocked",
+                result_reason=baseline["root_cause_summary"],
+                details={
+                    "baseline_id": str(baseline["id"]),
+                    "root_cause_category": root_cause,
+                    "configuration_changes_proposed": False,
+                },
+            )
+            await self._complete_run(run_id, host_id)
+            return RunProcessResult(
+                "completed",
+                "Baseline did not authorize configuration tuning; advisory evidence was recorded",
+            )
+
+        # Target configuration access is intentionally deferred until the
+        # root-cause gate has proven that a settings experiment is plausible.
+        snapshot = await worker._capture_target_snapshot(run_id, host_id)
+        if not snapshot.success:
+            return await self._fail_run(run_id, snapshot.error or "Target snapshot failed")
+        pre_snapshot = snapshot.data["pre_change_snapshot"]
         await self._set_run(run_id, "running", WorkflowStep.PROPOSE_PLAN)
         proposed = await worker._propose_plan(
             run_id,

@@ -36,6 +36,17 @@ LABEL_VERIFIED_FACT = "VERIFIED_FACT"
 LABEL_INCONCLUSIVE = "INCONCLUSIVE"
 
 
+def _decode_json(value, default):
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return value
+
+
 class ReportGenerationError(Exception):
     """Base exception for report generation errors."""
 
@@ -132,6 +143,75 @@ class ReportGenerator:
                 run_id,
             )
         return [dict(row) for row in rows]
+
+    async def _fetch_baseline_context(self, run_id: UUID) -> tuple[Optional[Dict], List[Dict]]:
+        """Fetch the immutable objective baseline and its advisory track."""
+        async with self.pool.acquire() as conn:
+            baseline = await conn.fetchrow(
+                """
+                SELECT id, status, objective_type, objective_formula,
+                       objective_direction, objective_score, metric_units,
+                       workload_coverage_pct, runtime_variance_pct,
+                       root_cause_category, root_cause_confidence,
+                       root_cause_summary, warnings, captured_at
+                FROM baseline_measurements WHERE run_id = $1
+                """,
+                run_id,
+            )
+            advisories = await conn.fetch(
+                """
+                SELECT id, category, severity, title, summary,
+                       recommendations, evidence_references, executable, created_at
+                FROM advisory_findings WHERE run_id = $1 ORDER BY created_at
+                """,
+                run_id,
+            )
+        return (dict(baseline) if baseline else None, [dict(row) for row in advisories])
+
+    def _build_baseline_summaries(
+        self, baseline: Optional[Dict], advisories: List[Dict]
+    ) -> List[Dict]:
+        """Represent baseline facts and advisory-only findings in the final report."""
+        items: List[Dict] = []
+        if baseline:
+            items.append(
+                {
+                    "baseline_id": str(baseline["id"]),
+                    "evidence_type": "baseline_measurement",
+                    "status": baseline["status"],
+                    "objective_type": baseline["objective_type"],
+                    "objective_formula": baseline["objective_formula"],
+                    "objective_direction": baseline["objective_direction"],
+                    "objective_score": baseline["objective_score"],
+                    "metric_units": _decode_json(baseline["metric_units"], {}),
+                    "workload_coverage_pct": baseline["workload_coverage_pct"],
+                    "runtime_variance_pct": baseline["runtime_variance_pct"],
+                    "root_cause_category": baseline["root_cause_category"],
+                    "root_cause_confidence": baseline["root_cause_confidence"],
+                    "root_cause_summary": baseline["root_cause_summary"],
+                    "warnings": _decode_json(baseline["warnings"], []),
+                    "collected_at": baseline["captured_at"].isoformat(),
+                    "provenance": LABEL_VERIFIED_FACT,
+                }
+            )
+        for advisory in advisories:
+            items.append(
+                {
+                    "advisory_id": str(advisory["id"]),
+                    "evidence_type": "non_executable_advisory",
+                    "category": advisory["category"],
+                    "severity": advisory["severity"],
+                    "title": advisory["title"],
+                    "summary": advisory["summary"],
+                    "recommendations": _decode_json(advisory["recommendations"], []),
+                    "evidence_references": _decode_json(
+                        advisory["evidence_references"], []
+                    ),
+                    "executable": False,
+                    "provenance": LABEL_AI_RECOMMENDATION,
+                }
+            )
+        return items
 
     def _build_evidence_summaries(self, evidence_rows: List[Dict]) -> List[Dict]:
         """
@@ -403,9 +483,13 @@ class ReportGenerator:
             evidence_rows = await self._fetch_evidence(run_id)
             plans = await self._fetch_plans(run_id)
             audit_entries = await self._fetch_audit_entries(run_id)
+            baseline, advisories = await self._fetch_baseline_context(run_id)
 
             # Build report sections
             evidence_summaries = self._build_evidence_summaries(evidence_rows)
+            evidence_summaries.extend(
+                self._build_baseline_summaries(baseline, advisories)
+            )
             plans_proposed = self._build_plans_proposed(plans)
             approval_decisions = self._build_approval_decisions(plans, audit_entries)
             applied_changes = self._build_applied_changes(plans)

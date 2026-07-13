@@ -629,7 +629,7 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     - Detect low coverage, unstable membership, and high measurement variance
     - _Requirements: 17.2, 17.3, 17.4, 17.9_
 
-  - [ ] 23.2 Implement baseline measurement protocol
+  - [x] 23.2 Implement baseline measurement protocol
     - Persist objective formula, fingerprint membership, warm-up window, measurement window, units, workload coverage, and safety metrics
     - Add a root-cause gate for configuration, query/index, lock, vacuum/bloat, resource saturation, connection pressure, and insufficient evidence
     - Route query/index findings to a separate non-executable advisory track instead of using parameter changes as a universal answer
