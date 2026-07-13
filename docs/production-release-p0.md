@@ -57,6 +57,10 @@ Production target DSNs must use `sslmode=require`, `verify-ca`, or `verify-full`
 Rotate an agent token through `POST /api/v1/fleet/{host_id}/agent-token`, then
 deploy the returned one-time token as `AGENT_TOKEN`. Persist
 `/var/lib/dbtune-agent` so evidence survives agent restarts and network outages.
+The agent probes and reports tuning capabilities at startup and on every
+heartbeat. Keep `RESTART_CAPABILITY`, `PROVIDER_API_CAPABILITY`, and
+`MANAGED_FILE_ACCESS` false unless that capability has been explicitly installed,
+tested, and enrolled for the target; connectivity alone never enables them.
 
 ## 3. Release with writes disabled
 
@@ -72,7 +76,8 @@ RUN_P0_TARGET_INTEGRATION=1 venv/bin/python -m pytest -q tests/test_p0_target_in
 
 Confirm authenticated HTTP and WebSocket access, tenant isolation, host
 heartbeats, fresh evidence, worker lease heartbeats, and an approved dry-run on a
-staging primary.
+staging primary. The Start tuning preflight must show a fresh capability report,
+zero blockers, and at least one independently allowlisted parameter.
 
 ## 4. Enable a production target deliberately
 

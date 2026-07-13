@@ -37,6 +37,40 @@ SELECT
     pg_is_in_recovery() AS is_replica;
 """
 
+CAPABILITY_IDENTITY_QUERY = """
+SELECT
+    current_database() AS database_name,
+    current_user AS database_user,
+    current_setting('server_version_num')::integer AS server_version_num,
+    pg_is_in_recovery() AS is_replica,
+    COALESCE(
+        (SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user),
+        FALSE
+    ) AS is_superuser;
+"""
+
+SUPPORTED_TUNING_PARAMETERS = (
+    "work_mem",
+    "random_page_cost",
+    "seq_page_cost",
+    "checkpoint_completion_target",
+    "effective_io_concurrency",
+    "max_parallel_workers_per_gather",
+    "max_parallel_workers",
+    "max_wal_size",
+    "min_wal_size",
+    "bgwriter_lru_maxpages",
+    "bgwriter_delay",
+    "effective_cache_size",
+    "maintenance_work_mem",
+    "default_statistics_target",
+    "max_parallel_maintenance_workers",
+    "shared_buffers",
+    "max_worker_processes",
+    "wal_buffers",
+    "huge_pages",
+)
+
 
 class HostAgent:
     """
@@ -123,6 +157,7 @@ class HostAgent:
 
         # Detect role and version on startup
         await self.detect_role_version()
+        await self.report_capabilities()
 
         # Launch collection loops
         self._tasks = [
@@ -223,7 +258,154 @@ class HostAgent:
                 await self.report_heartbeat()
             except Exception as e:
                 logger.error(f"Heartbeat error: {e}")
+            try:
+                await self.report_capabilities()
+            except Exception as e:
+                logger.error(f"Capability reporting error: {e}")
             await asyncio.sleep(self.config.heartbeat_interval)
+
+    async def probe_capabilities(self) -> Dict[str, Any]:
+        """Probe independently verifiable read, telemetry, and apply capabilities."""
+        observed_at = datetime.now(timezone.utc).isoformat()
+        report: Dict[str, Any] = {
+            "database_name": None,
+            "connectivity": False,
+            "system_information": False,
+            "system_metrics": False,
+            "pg_stat_statements": False,
+            "query_text_collection": False,
+            "configuration_read": False,
+            "configuration_write": False,
+            "reload_permission": False,
+            "restart_capability": self.config.restart_capability,
+            "provider_api": self.config.provider_api_capability,
+            "managed_file_access": self.config.managed_file_access,
+            "details": {"probes": {}},
+            "observed_at": observed_at,
+        }
+        probes = report["details"]["probes"]
+        if self.conn is None:
+            probes["database"] = "No database connection is configured."
+        else:
+            try:
+                identity = await self.conn.fetchrow(CAPABILITY_IDENTITY_QUERY)
+                if identity is None:
+                    raise RuntimeError("PostgreSQL identity query returned no row")
+                report["connectivity"] = True
+                report["system_information"] = True
+                report["database_name"] = identity["database_name"]
+                report["details"].update(
+                    {
+                        "database_user": identity["database_user"],
+                        "server_version_num": identity["server_version_num"],
+                        "is_replica": identity["is_replica"],
+                    }
+                )
+                probes["database"] = "passed"
+
+                try:
+                    await self.conn.fetchrow(
+                        "SELECT name, setting, context, source, pending_restart "
+                        "FROM pg_catalog.pg_settings LIMIT 1"
+                    )
+                    report["configuration_read"] = True
+                    probes["configuration_read"] = "passed"
+                except Exception as exc:
+                    probes["configuration_read"] = str(exc)
+
+                try:
+                    await self.conn.fetchrow(
+                        "SELECT queryid, query FROM pg_stat_statements LIMIT 1"
+                    )
+                    report["pg_stat_statements"] = True
+                    report["query_text_collection"] = True
+                    probes["pg_stat_statements"] = "passed"
+                except Exception as exc:
+                    probes["pg_stat_statements"] = str(exc)
+
+                is_superuser = bool(identity["is_superuser"])
+                if is_superuser:
+                    report["configuration_write"] = True
+                    report["reload_permission"] = True
+                    probes["configuration_write"] = "superuser"
+                    probes["reload_permission"] = "superuser"
+                else:
+                    if int(identity["server_version_num"]) >= 150000:
+                        try:
+                            permission = await self.conn.fetchrow(
+                                """
+                                SELECT EXISTS (
+                                    SELECT 1
+                                    FROM unnest($1::text[]) AS parameter(name)
+                                    WHERE has_parameter_privilege(
+                                        current_user, parameter.name, 'ALTER SYSTEM'
+                                    )
+                                ) AS permitted
+                                """,
+                                list(SUPPORTED_TUNING_PARAMETERS),
+                            )
+                            report["configuration_write"] = bool(
+                                permission and permission["permitted"]
+                            )
+                            probes["configuration_write"] = (
+                                "passed" if report["configuration_write"] else "not granted"
+                            )
+                        except Exception as exc:
+                            probes["configuration_write"] = str(exc)
+                    else:
+                        probes["configuration_write"] = (
+                            "PostgreSQL versions before 15 require superuser for ALTER SYSTEM."
+                        )
+
+                    try:
+                        permission = await self.conn.fetchrow(
+                            """
+                            SELECT has_function_privilege(
+                                current_user, 'pg_catalog.pg_reload_conf()', 'EXECUTE'
+                            ) AS permitted
+                            """
+                        )
+                        report["reload_permission"] = bool(
+                            permission and permission["permitted"]
+                        )
+                        probes["reload_permission"] = (
+                            "passed" if report["reload_permission"] else "not granted"
+                        )
+                    except Exception as exc:
+                        probes["reload_permission"] = str(exc)
+            except Exception as exc:
+                probes["database"] = str(exc)
+
+        try:
+            os_snapshot = await self.collect_os_metrics()
+            report["system_metrics"] = bool(os_snapshot and os_snapshot.get("data"))
+            probes["system_metrics"] = (
+                "passed" if report["system_metrics"] else "collector returned no metrics"
+            )
+        except Exception as exc:
+            probes["system_metrics"] = str(exc)
+
+        return report
+
+    async def report_capabilities(self) -> Optional[Dict[str, Any]]:
+        """Probe and publish a fresh capability snapshot to the Control Plane."""
+        if self._http_client is None:
+            return None
+        report = await self.probe_capabilities()
+        url = f"{self.config.control_plane_url}/api/v1/fleet/{self.config.host_id}/capabilities"
+        response = await self._http_client.post(
+            url,
+            json=json.loads(json.dumps(report, default=str)),
+            headers=self._agent_headers(),
+        )
+        if response.status_code >= 400:
+            logger.warning(
+                "Capability report returned status %s: %s",
+                response.status_code,
+                response.text,
+            )
+            return None
+        return report
 
     async def collect_pg_settings(self) -> Optional[Dict[str, Any]]:
         """Collect pg_settings configuration snapshot."""

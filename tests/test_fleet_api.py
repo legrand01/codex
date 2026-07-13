@@ -158,6 +158,9 @@ class MockConnection:
     async def fetchval(self, query, *args):
         return uuid.uuid4()
 
+    async def execute(self, query, *args):
+        return "UPDATE 1"
+
 
 def _override_db(mock_conn):
     """Create a dependency override generator for get_db."""
@@ -530,6 +533,7 @@ async def test_receive_capability_report_upserts_agent_snapshot():
             response = await client.post(
                 f"/api/v1/fleet/{host_id}/capabilities",
                 json={
+                    "database_name": "appdb",
                     "connectivity": True,
                     "system_information": True,
                     "system_metrics": True,
@@ -545,6 +549,7 @@ async def test_receive_capability_report_upserts_agent_snapshot():
         assert response.status_code == 201
         data = response.json()
         assert data["host_id"] == str(host_id)
+        assert data["database_name"] == "appdb"
         assert data["configuration_write"] is True
         assert data["restart_capability"] is False
         assert data["details"] == {"source": "agent-probe"}

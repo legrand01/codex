@@ -84,6 +84,12 @@ class AgentConfig:
     buffer_dir: str = "/tmp/host-agent-buffer"
     heartbeat_interval: int = 30
 
+    # Explicitly enrolled capabilities. These must never be inferred from
+    # connectivity because they can mutate or restart the target host.
+    restart_capability: bool = False
+    provider_api_capability: bool = False
+    managed_file_access: bool = False
+
     @classmethod
     def from_env(cls) -> "AgentConfig":
         """Create configuration from environment variables."""
@@ -102,6 +108,9 @@ class AgentConfig:
             buffer_max_bytes=_env_int("BUFFER_MAX_BYTES", 512 * 1024 * 1024),
             buffer_dir=_env_str("BUFFER_DIR", "/tmp/host-agent-buffer"),
             heartbeat_interval=_env_int("HEARTBEAT_INTERVAL", 30),
+            restart_capability=_env_bool("RESTART_CAPABILITY", False),
+            provider_api_capability=_env_bool("PROVIDER_API_CAPABILITY", False),
+            managed_file_access=_env_bool("MANAGED_FILE_ACCESS", False),
         )
         config.validate()
         return config

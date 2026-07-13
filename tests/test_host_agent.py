@@ -578,6 +578,88 @@ class TestHeartbeat:
         await agent.report_heartbeat()  # Should not raise
 
 
+class TestCapabilityReporting:
+    """Tests for independently probed tuning prerequisites."""
+
+    @pytest.mark.asyncio
+    async def test_probe_capabilities_reports_real_database_access(self, valid_config):
+        conn = MagicMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                MockRecord(
+                    database_name="appdb",
+                    database_user="dbtune_agent",
+                    server_version_num=170005,
+                    is_replica=False,
+                    is_superuser=False,
+                ),
+                MockRecord(name="work_mem"),
+                None,
+                MockRecord(permitted=True),
+                MockRecord(permitted=True),
+            ]
+        )
+        probe_agent = HostAgent(config=valid_config, conn=conn)
+        probe_agent.collect_os_metrics = AsyncMock(return_value={"data": {"cpu_percent": 1}})
+
+        report = await probe_agent.probe_capabilities()
+
+        assert report["database_name"] == "appdb"
+        assert report["connectivity"] is True
+        assert report["system_information"] is True
+        assert report["system_metrics"] is True
+        assert report["pg_stat_statements"] is True
+        assert report["query_text_collection"] is True
+        assert report["configuration_read"] is True
+        assert report["configuration_write"] is True
+        assert report["reload_permission"] is True
+        assert report["restart_capability"] is False
+
+    @pytest.mark.asyncio
+    async def test_probe_capabilities_fails_closed_without_database(self, valid_config):
+        probe_agent = HostAgent(config=valid_config, conn=None)
+        probe_agent.collect_os_metrics = AsyncMock(return_value=None)
+
+        report = await probe_agent.probe_capabilities()
+
+        assert report["connectivity"] is False
+        assert report["configuration_read"] is False
+        assert report["configuration_write"] is False
+        assert report["reload_permission"] is False
+        assert report["system_metrics"] is False
+
+    @pytest.mark.asyncio
+    async def test_report_capabilities_posts_snapshot(self, agent):
+        agent.probe_capabilities = AsyncMock(
+            return_value={
+                "database_name": "appdb",
+                "connectivity": True,
+                "system_information": True,
+                "system_metrics": True,
+                "pg_stat_statements": True,
+                "query_text_collection": True,
+                "configuration_read": True,
+                "configuration_write": True,
+                "reload_permission": True,
+                "restart_capability": False,
+                "provider_api": False,
+                "managed_file_access": False,
+                "details": {},
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        response = MagicMock(status_code=201)
+        agent._http_client = MagicMock()
+        agent._http_client.post = AsyncMock(return_value=response)
+
+        report = await agent.report_capabilities()
+
+        assert report is not None
+        request = agent._http_client.post.await_args
+        assert request.args[0].endswith("/fleet/test-host-001/capabilities")
+        assert request.kwargs["json"]["database_name"] == "appdb"
+
+
 # ============================================================================
 # Role/Version Detection Tests
 # ============================================================================

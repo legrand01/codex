@@ -109,6 +109,7 @@ class EvidenceIngestResponse(BaseModel):
 class CapabilityReportRequest(BaseModel):
     """Independent capabilities observed by the authenticated Host Agent."""
 
+    database_name: Optional[str] = Field(default=None, min_length=1, max_length=63)
     connectivity: bool
     system_information: bool
     system_metrics: bool
@@ -461,7 +462,14 @@ async def receive_capability_report(
     )
     if row is None:
         raise HTTPException(status_code=404, detail=f"Host with id '{host_id}' not found")
+    if report.database_name:
+        await db.execute(
+            "UPDATE hosts SET database_name = $2, updated_at = NOW() WHERE id = $1",
+            host_id,
+            report.database_name,
+        )
     response_data = dict(row)
+    response_data["database_name"] = report.database_name
     if isinstance(response_data.get("details"), str):
         response_data["details"] = json.loads(response_data["details"])
     return CapabilityReportResponse(**response_data)

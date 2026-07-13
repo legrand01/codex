@@ -182,6 +182,38 @@ async def start_run(
     if host is None:
         raise HTTPException(status_code=409, detail="A registered target host is required")
 
+    preflight = await build_tuning_preflight(
+        db,
+        principal.organization_id,
+        host["id"],
+        request.tuning_mode,
+    )
+    if not preflight.ready:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Tuning preflight is blocked; refresh capabilities and resolve "
+                    "every blocker."
+                ),
+                "blockers": preflight.blockers,
+            },
+        )
+    available_parameters = {
+        parameter.name for parameter in preflight.parameters if parameter.available
+    }
+    unavailable_parameters = sorted(
+        set(request.selected_parameters) - available_parameters
+    )
+    if unavailable_parameters:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Parameters are not available for this host and mode: "
+                + ", ".join(unavailable_parameters)
+            ),
+        )
+
     run_id = uuid4()
     now = datetime.now(timezone.utc)
     async with db.transaction():

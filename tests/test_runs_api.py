@@ -12,6 +12,7 @@ Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6
 """
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -45,6 +46,14 @@ def _mock_db_dependency():
     return mock_conn
 
 
+def _ready_preflight(*parameters):
+    return MagicMock(
+        ready=True,
+        blockers=[],
+        parameters=[SimpleNamespace(name=name, available=True) for name in parameters],
+    )
+
+
 # --- Start Run Tests ---
 
 
@@ -54,13 +63,12 @@ class TestStartRunEndpoint:
     @pytest.mark.asyncio
     async def test_start_run_success(self, api_client):
         """Starting a run returns success response."""
-        mock_worker = MagicMock()
-        mock_worker._run_id = uuid4()
-        mock_worker.start_run = AsyncMock()
-
         mock_conn = _mock_db_dependency()
 
-        with patch("backend.services.loop_worker.DBALoopWorker", return_value=mock_worker):
+        with patch(
+            "backend.api.runs.build_tuning_preflight",
+            AsyncMock(return_value=_ready_preflight()),
+        ):
             with patch("backend.dependencies.get_pool") as mock_get_pool:
                 mock_pool = MagicMock()
                 mock_pool.acquire = MagicMock(
@@ -103,13 +111,12 @@ class TestStartRunEndpoint:
     @pytest.mark.asyncio
     async def test_start_run_with_config(self, api_client):
         """Starting a run with custom config."""
-        mock_worker = MagicMock()
-        mock_worker._run_id = uuid4()
-        mock_worker.start_run = AsyncMock()
-
         mock_conn = _mock_db_dependency()
 
-        with patch("backend.services.loop_worker.DBALoopWorker", return_value=mock_worker):
+        with patch(
+            "backend.api.runs.build_tuning_preflight",
+            AsyncMock(return_value=_ready_preflight()),
+        ):
             with patch("backend.dependencies.get_pool") as mock_get_pool:
                 mock_pool = MagicMock()
                 mock_pool.acquire = MagicMock(
@@ -132,7 +139,6 @@ class TestStartRunEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["goal"] == "Fix replication lag"
-
     @pytest.mark.asyncio
     async def test_start_run_invalid_host_id(self, api_client):
         """Starting a run with invalid host_id format."""
@@ -170,30 +176,36 @@ class TestStartRunEndpoint:
             }
         )
 
-        with patch("backend.dependencies.get_pool") as mock_get_pool:
-            mock_pool = MagicMock()
-            mock_pool.acquire = MagicMock(
-                return_value=AsyncMock(
-                    __aenter__=AsyncMock(return_value=mock_conn),
-                    __aexit__=AsyncMock(return_value=None),
+        with patch(
+            "backend.api.runs.build_tuning_preflight",
+            AsyncMock(
+                return_value=_ready_preflight("work_mem", "random_page_cost")
+            ),
+        ):
+            with patch("backend.dependencies.get_pool") as mock_get_pool:
+                mock_pool = MagicMock()
+                mock_pool.acquire = MagicMock(
+                    return_value=AsyncMock(
+                        __aenter__=AsyncMock(return_value=mock_conn),
+                        __aexit__=AsyncMock(return_value=None),
+                    )
                 )
-            )
-            mock_get_pool.return_value = mock_pool
-            response = await api_client.post(
-                "/api/v1/runs/",
-                json={
-                    "host_id": str(host_id),
-                    "database_name": "appdb",
-                    "goal": "Improve checkout AQR",
-                    "tuning_target": "system_wide_aqr",
-                    "tuning_mode": "reload_only",
-                    "selected_parameters": ["work_mem", "random_page_cost"],
-                    "approval_policy": "per_candidate",
-                    "warmup_window_seconds": 90,
-                    "measurement_window_seconds": 600,
-                    "objective_guardrails": {"aqr_regression_pct": 5.0},
-                },
-            )
+                mock_get_pool.return_value = mock_pool
+                response = await api_client.post(
+                    "/api/v1/runs/",
+                    json={
+                        "host_id": str(host_id),
+                        "database_name": "appdb",
+                        "goal": "Improve checkout AQR",
+                        "tuning_target": "system_wide_aqr",
+                        "tuning_mode": "reload_only",
+                        "selected_parameters": ["work_mem", "random_page_cost"],
+                        "approval_policy": "per_candidate",
+                        "warmup_window_seconds": 90,
+                        "measurement_window_seconds": 600,
+                        "objective_guardrails": {"aqr_regression_pct": 5.0},
+                    },
+                )
 
         assert response.status_code == 200
         loop_insert = next(
@@ -206,6 +218,31 @@ class TestStartRunEndpoint:
         assert "system_wide_aqr" in loop_insert.args
         assert "reload_only" in loop_insert.args
         assert 600 in loop_insert.args
+
+    @pytest.mark.asyncio
+    async def test_start_run_rechecks_preflight_server_side(self, api_client):
+        mock_conn = _mock_db_dependency()
+        blocked = MagicMock(
+            ready=False,
+            blockers=["The agent capability report must be newer than five minutes."],
+            parameters=[],
+        )
+        with patch("backend.api.runs.build_tuning_preflight", AsyncMock(return_value=blocked)):
+            with patch("backend.dependencies.get_pool") as mock_get_pool:
+                mock_pool = MagicMock()
+                mock_pool.acquire = MagicMock(
+                    return_value=AsyncMock(
+                        __aenter__=AsyncMock(return_value=mock_conn),
+                        __aexit__=AsyncMock(return_value=None),
+                    )
+                )
+                mock_get_pool.return_value = mock_pool
+                response = await api_client.post(
+                    "/api/v1/runs/", json={"goal": "Unsafe bypass attempt"}
+                )
+
+        assert response.status_code == 409
+        assert "preflight is blocked" in response.text
 
     @pytest.mark.asyncio
     async def test_reload_only_rejects_restart_parameters(self, api_client):

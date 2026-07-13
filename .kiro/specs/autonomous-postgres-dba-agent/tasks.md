@@ -594,7 +594,7 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
 
 - [~] 22. Persistent tuning-session product workflow
 
-  - [~] 22.1 Replace active-only run listing with persistent session history
+  - [x] 22.1 Replace active-only run listing with persistent session history
     - Add paginated/filterable all-status runs API while retaining an active-only filter
     - Include completion timestamp and freeze terminal-run elapsed duration
     - Add indexes for host, status, objective, mode, and start/completion date filters
@@ -706,7 +706,7 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     - Add compare, redacted download, and guarded re-apply APIs and UI
     - _Requirements: 20.1, 20.2_
 
-  - [ ] 25.2 Implement Agent capability diagnostics and setup guide
+  - [~] 25.2 Implement Agent capability diagnostics and setup guide
     - Report connectivity, system info/metrics, pg_stat_statements, query collection, read/write/reload/restart/provider capabilities independently
     - Generate PostgreSQL-version, mode, and backend-specific least-privilege setup instructions
     - _Requirements: 20.3, 20.4_
