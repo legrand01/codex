@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { fleetApi, runsApi } from '../api/client';
+import { fingerprintsApi, fleetApi, runsApi } from '../api/client';
 import type {
+  FingerprintDiagnostics,
   HostSummary,
   TuningMode,
   TuningPreflight,
   TuningTarget,
+  WorkloadFingerprint,
 } from '../api/types';
 import { useApi } from '../hooks/useApi';
 import { LoadingSpinner } from '../components';
@@ -45,6 +47,14 @@ export function StartTuning() {
   const [target, setTarget] = useState<TuningTarget>('system_wide_aqr');
   const [databaseName, setDatabaseName] = useState('');
   const [fingerprintId, setFingerprintId] = useState('');
+  const [fingerprints, setFingerprints] = useState<WorkloadFingerprint[]>([]);
+  const [fingerprintDiagnostics, setFingerprintDiagnostics] = useState<FingerprintDiagnostics | null>(null);
+  const [fingerprintLoading, setFingerprintLoading] = useState(false);
+  const [fingerprintError, setFingerprintError] = useState<string | null>(null);
+  const [fingerprintWorking, setFingerprintWorking] = useState(false);
+  const [customFingerprintName, setCustomFingerprintName] = useState('Checkout workload');
+  const [customQueryIds, setCustomQueryIds] = useState<string[]>([]);
+  const [includeQueryText, setIncludeQueryText] = useState(false);
   const [goal, setGoal] = useState('Improve PostgreSQL performance safely and report measurable results');
   const [selectedParameters, setSelectedParameters] = useState<string[]>([]);
   const [approvalPolicy, setApprovalPolicy] = useState<'per_candidate' | 'final_only'>('per_candidate');
@@ -93,23 +103,112 @@ export function StartTuning() {
     return () => { cancelled = true; };
   }, [hostId, mode, refreshSequence]);
 
+  useEffect(() => {
+    if (!hostId) {
+      setFingerprints([]);
+      setFingerprintDiagnostics(null);
+      return;
+    }
+    let cancelled = false;
+    setFingerprintLoading(true);
+    setFingerprintError(null);
+    Promise.all([
+      fingerprintsApi.getCandidates(hostId),
+      fingerprintsApi.list(hostId),
+    ])
+      .then(([diagnostics, catalog]) => {
+        if (cancelled) return;
+        setFingerprintDiagnostics(diagnostics);
+        setFingerprints(catalog);
+        setCustomQueryIds(diagnostics.selected_query_ids);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setFingerprintDiagnostics(null);
+        setFingerprints([]);
+        setFingerprintError(err instanceof Error ? err.message : 'Workload analysis failed');
+      })
+      .finally(() => { if (!cancelled) setFingerprintLoading(false); });
+    return () => { cancelled = true; };
+  }, [hostId, refreshSequence]);
+
+  useEffect(() => {
+    const kind = target === 'recommended_fingerprint'
+      ? 'recommended'
+      : target === 'custom_fingerprint' ? 'custom' : null;
+    if (!kind) {
+      setFingerprintId('');
+      return;
+    }
+    setFingerprintId((current) => {
+      if (fingerprints.some((fingerprint) => fingerprint.id === current && fingerprint.kind === kind)) return current;
+      return fingerprints.find((fingerprint) => fingerprint.kind === kind && fingerprint.ready)?.id ?? '';
+    });
+  }, [fingerprints, target]);
+
   const availableParameters = useMemo(
     () => preflight?.parameters.filter((parameter) => parameter.available) ?? [],
     [preflight],
   );
-  const requiresFingerprint = target === 'custom_fingerprint';
+  const requiresFingerprint = ['recommended_fingerprint', 'custom_fingerprint'].includes(target);
+  const fingerprintKind = target === 'recommended_fingerprint' ? 'recommended' : 'custom';
+  const compatibleFingerprints = fingerprints.filter((fingerprint) => fingerprint.kind === fingerprintKind);
+  const selectedFingerprint = fingerprints.find((fingerprint) => fingerprint.id === fingerprintId);
+  const customCoverage = fingerprintDiagnostics?.candidates
+    .filter((candidate) => customQueryIds.includes(candidate.query_id))
+    .reduce((sum, candidate) => sum + candidate.runtime_coverage_pct, 0) ?? 0;
   const canSubmit = Boolean(
     preflight?.ready
     && goal.trim()
     && hostId
     && selectedParameters.length
-    && (!requiresFingerprint || fingerprintId.trim()),
+    && (!requiresFingerprint || selectedFingerprint?.ready),
   );
 
   const toggleParameter = (name: string) => {
     setSelectedParameters((current) => current.includes(name)
       ? current.filter((parameter) => parameter !== name)
       : [...current, name]);
+  };
+
+  const saveRecommendedFingerprint = async () => {
+    if (!hostId) return;
+    setFingerprintWorking(true);
+    setFingerprintError(null);
+    try {
+      const result = await fingerprintsApi.recommend({
+        host_id: hostId,
+        database_name: databaseName.trim() || undefined,
+        include_query_text: includeQueryText,
+      });
+      setFingerprints((current) => [result, ...current.filter((item) => item.id !== result.id)]);
+      setFingerprintId(result.id);
+    } catch (err) {
+      setFingerprintError(err instanceof Error ? err.message : 'Unable to generate fingerprint');
+    } finally {
+      setFingerprintWorking(false);
+    }
+  };
+
+  const saveCustomFingerprint = async () => {
+    if (!hostId || !customFingerprintName.trim() || !customQueryIds.length) return;
+    setFingerprintWorking(true);
+    setFingerprintError(null);
+    try {
+      const result = await fingerprintsApi.create({
+        host_id: hostId,
+        database_name: databaseName.trim() || undefined,
+        name: customFingerprintName.trim(),
+        query_ids: customQueryIds,
+        include_query_text: includeQueryText,
+      });
+      setFingerprints((current) => [result, ...current]);
+      setFingerprintId(result.id);
+    } catch (err) {
+      setFingerprintError(err instanceof Error ? err.message : 'Unable to save fingerprint');
+    } finally {
+      setFingerprintWorking(false);
+    }
   };
 
   const submit = async (event: React.FormEvent) => {
@@ -176,9 +275,61 @@ export function StartTuning() {
             </label>)}
           </div>
         </div>
-        {requiresFingerprint && <label style={{ display: 'block', marginTop: '12px' }}><span style={{ display: 'block', fontWeight: 600, marginBottom: '6px' }}>Workload fingerprint ID</span>
-          <input value={fingerprintId} onChange={(event) => setFingerprintId(event.target.value)} placeholder="UUID from workload fingerprints" style={inputStyle} />
-        </label>}
+        {requiresFingerprint && <div style={{ marginTop: '14px', padding: '14px', border: '1px solid #bfdbfe', borderRadius: '8px', background: '#f8fbff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'start' }}>
+            <div><strong style={{ display: 'block' }}>Measured workload fingerprint</strong>
+              <small style={{ color: '#6b7280' }}>Membership is saved with calls, average runtime, total runtime, visible coverage, and last-seen evidence.</small>
+            </div>
+            {fingerprintDiagnostics && <strong style={{ color: fingerprintDiagnostics.ready ? '#15803d' : '#b45309', textTransform: 'uppercase', fontSize: '0.78rem' }}>{fingerprintDiagnostics.status.replace(/_/g, ' ')}</strong>}
+          </div>
+          {fingerprintLoading && <p style={{ color: '#6b7280' }}>Analyzing recent pg_stat_statements snapshots…</p>}
+          {fingerprintError && <p style={{ color: '#b91c1c' }}>{fingerprintError}</p>}
+          {fingerprintDiagnostics && <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px', margin: '12px 0' }}>
+              <div style={{ ...sectionStyle, padding: '9px' }}><small style={{ color: '#6b7280' }}>Recommended coverage</small><strong style={{ display: 'block' }}>{fingerprintDiagnostics.coverage_pct.toFixed(1)}%</strong></div>
+              <div style={{ ...sectionStyle, padding: '9px' }}><small style={{ color: '#6b7280' }}>Membership stability</small><strong style={{ display: 'block' }}>{fingerprintDiagnostics.membership_stability_pct === null ? 'Needs history' : `${fingerprintDiagnostics.membership_stability_pct.toFixed(1)}%`}</strong></div>
+              <div style={{ ...sectionStyle, padding: '9px' }}><small style={{ color: '#6b7280' }}>Runtime variance</small><strong style={{ display: 'block' }}>{fingerprintDiagnostics.runtime_variance_pct === null ? 'Needs history' : `${fingerprintDiagnostics.runtime_variance_pct.toFixed(1)}%`}</strong></div>
+              <div style={{ ...sectionStyle, padding: '9px' }}><small style={{ color: '#6b7280' }}>Observations</small><strong style={{ display: 'block' }}>{fingerprintDiagnostics.snapshot_count}</strong></div>
+            </div>
+            {fingerprintDiagnostics.warnings.map((warning) => <div key={warning} style={{ color: '#92400e', background: '#fffbeb', padding: '7px 9px', marginTop: '5px', borderRadius: '5px', fontSize: '0.8rem' }}>! {warning}</div>)}
+          </>}
+          <label style={{ display: 'block', marginTop: '12px' }}><span style={{ display: 'block', fontWeight: 600, marginBottom: '6px' }}>Saved {fingerprintKind} fingerprint</span>
+            <select value={fingerprintId} onChange={(event) => setFingerprintId(event.target.value)} style={inputStyle}>
+              <option value="">Create or select a saved fingerprint</option>
+              {compatibleFingerprints.map((fingerprint) => <option key={fingerprint.id} value={fingerprint.id}>{fingerprint.name} · {fingerprint.status.replace(/_/g, ' ')} · {fingerprint.observed_coverage_pct.toFixed(1)}% coverage</option>)}
+            </select>
+          </label>
+          {selectedFingerprint && <div style={{ marginTop: '8px', color: selectedFingerprint.ready ? '#166534' : '#991b1b', fontSize: '0.82rem' }}>
+            {selectedFingerprint.ready ? '✓ Ready for repeatable baseline and candidate measurements.' : `× Cannot start: ${selectedFingerprint.status.replace(/_/g, ' ')}. Regenerate after gathering a representative workload.`}
+          </div>}
+          <label style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px', fontSize: '0.82rem' }}>
+            <input type="checkbox" checked={includeQueryText} onChange={(event) => setIncludeQueryText(event.target.checked)} />
+            Persist normalized query text in this fingerprint (optional; query IDs and metrics are always saved)
+          </label>
+          {target === 'recommended_fingerprint' && <button type="button" onClick={saveRecommendedFingerprint} disabled={fingerprintWorking || !fingerprintDiagnostics?.selected_query_ids.length} style={{ marginTop: '12px', padding: '9px 12px', border: 0, borderRadius: '6px', background: '#2563eb', color: '#fff', fontWeight: 600 }}>
+            {fingerprintWorking ? 'Analyzing…' : compatibleFingerprints.length ? 'Refresh recommended fingerprint' : 'Generate recommended fingerprint'}
+          </button>}
+          {target === 'custom_fingerprint' && <div style={{ marginTop: '14px', borderTop: '1px solid #dbeafe', paddingTop: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) auto', gap: '10px', alignItems: 'end' }}>
+              <label><span style={{ display: 'block', fontWeight: 600, marginBottom: '5px' }}>Fingerprint name</span>
+                <input value={customFingerprintName} onChange={(event) => setCustomFingerprintName(event.target.value)} maxLength={120} style={inputStyle} />
+              </label>
+              <strong style={{ color: customCoverage >= 70 ? '#166534' : '#92400e', paddingBottom: '10px' }}>{customCoverage.toFixed(1)}% selected coverage</strong>
+            </div>
+            <div style={{ maxHeight: '280px', overflow: 'auto', marginTop: '10px', border: '1px solid #e5e7eb', borderRadius: '6px', background: '#fff' }}>
+              {(fingerprintDiagnostics?.candidates ?? []).slice(0, 25).map((candidate) => <label key={candidate.query_id} style={{ display: 'grid', gridTemplateColumns: '24px minmax(200px, 1fr) 90px 90px', gap: '8px', alignItems: 'center', padding: '8px', borderBottom: '1px solid #e5e7eb', fontSize: '0.78rem' }}>
+                <input type="checkbox" checked={customQueryIds.includes(candidate.query_id)} onChange={() => setCustomQueryIds((current) => current.includes(candidate.query_id) ? current.filter((id) => id !== candidate.query_id) : [...current, candidate.query_id])} />
+                <span title={candidate.query_text ?? candidate.query_id}>{(candidate.query_text ?? `Query ${candidate.query_id}`).slice(0, 130)}</span>
+                <span>{candidate.average_query_runtime_ms.toFixed(2)} ms AQR</span>
+                <strong>{candidate.runtime_coverage_pct.toFixed(1)}%</strong>
+              </label>)}
+              {!fingerprintDiagnostics?.candidates.length && <div style={{ padding: '12px', color: '#6b7280' }}>No normalized statements are available yet.</div>}
+            </div>
+            <button type="button" onClick={saveCustomFingerprint} disabled={fingerprintWorking || !customFingerprintName.trim() || !customQueryIds.length} style={{ marginTop: '10px', padding: '9px 12px', border: 0, borderRadius: '6px', background: '#2563eb', color: '#fff', fontWeight: 600 }}>
+              {fingerprintWorking ? 'Saving…' : 'Save custom fingerprint'}
+            </button>
+          </div>}
+        </div>}
         <label style={{ display: 'block', marginTop: '14px' }}><span style={{ display: 'block', fontWeight: 600, marginBottom: '6px' }}>Session goal</span>
           <textarea value={goal} onChange={(event) => setGoal(event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
         </label>

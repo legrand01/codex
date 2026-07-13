@@ -162,6 +162,69 @@ export interface TuningPreflight {
   capability_observed_at: string | null;
 }
 
+export interface FingerprintCandidate {
+  query_id: string;
+  query_text: string | null;
+  calls: number;
+  average_query_runtime_ms: number;
+  total_runtime_ms: number;
+  runtime_coverage_pct: number;
+  impact_score: number;
+  recommended: boolean;
+  selected: boolean;
+  last_seen_at: string | null;
+}
+
+export interface FingerprintDiagnostics {
+  host_id: string;
+  database_name: string | null;
+  status: string;
+  ready: boolean;
+  candidates: FingerprintCandidate[];
+  selected_query_ids: string[];
+  coverage_pct: number;
+  membership_stability_pct: number | null;
+  runtime_variance_pct: number | null;
+  source_snapshot_id: string | null;
+  source_collected_at: string | null;
+  snapshot_count: number;
+  collector_truncated: boolean;
+  warnings: string[];
+}
+
+export interface FingerprintMember {
+  query_id: string;
+  query_text: string | null;
+  calls: number;
+  average_query_runtime_ms: number;
+  total_runtime_ms: number;
+  runtime_coverage_pct: number;
+  impact_score: number;
+  last_seen_at: string | null;
+  ordinal: number;
+}
+
+export interface WorkloadFingerprint {
+  id: string;
+  host_id: string;
+  database_name: string | null;
+  name: string;
+  kind: 'recommended' | 'custom';
+  status: string;
+  ready: boolean;
+  selection_criteria: Record<string, unknown>;
+  diagnostics: Record<string, unknown>;
+  observed_coverage_pct: number;
+  membership_stability_pct: number | null;
+  runtime_variance_pct: number | null;
+  source_snapshot_id: string | null;
+  source_collected_at: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  members: FingerprintMember[];
+}
+
 export interface EvidenceSnapshot {
   id: string;
   run_id: string;

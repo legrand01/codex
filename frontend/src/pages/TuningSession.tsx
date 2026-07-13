@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   auditApi,
   evidenceApi,
+  fingerprintsApi,
   plansApi,
   reportsApi,
   rollbackApi,
@@ -14,6 +15,7 @@ import type {
   EvidenceSnapshot,
   PlanDetail,
   RunDetail,
+  WorkloadFingerprint,
 } from '../api/types';
 import { useApi } from '../hooks/useApi';
 import { EmptyState, LoadingSpinner, StatusBadge } from '../components';
@@ -226,14 +228,47 @@ function ConfigurationTab({ data }: { data: SessionData }) {
   </div>;
 }
 
+function SelectedFingerprint({ fingerprintId }: { fingerprintId: string }) {
+  const request = useApi<WorkloadFingerprint>(() => fingerprintsApi.get(fingerprintId), [fingerprintId]);
+  if (request.loading) return <LoadingSpinner message="Loading saved workload membership..." />;
+  if (!request.data) return <div style={{ ...card, borderColor: '#fecaca', color: '#991b1b' }}>Saved fingerprint is unavailable: {request.error}</div>;
+  const fingerprint = request.data;
+  const warnings = Array.isArray(fingerprint.diagnostics.warnings)
+    ? fingerprint.diagnostics.warnings.map(String)
+    : [];
+  return <div style={{ ...card, marginBottom: '12px', borderColor: fingerprint.ready ? '#bbf7d0' : '#fed7aa' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'start' }}>
+      <div><div style={subtle}>Saved {fingerprint.kind} fingerprint</div><strong>{fingerprint.name}</strong><div style={subtle}>{fingerprint.members.length} normalized statement(s) · membership fixed for this session</div></div>
+      <strong style={{ color: fingerprint.ready ? '#15803d' : '#b45309', textTransform: 'uppercase', fontSize: '0.76rem' }}>{fingerprint.status.replace(/_/g, ' ')}</strong>
+    </div>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px', marginTop: '10px' }}>
+      <div><div style={subtle}>Runtime coverage</div><strong>{fingerprint.observed_coverage_pct.toFixed(1)}%</strong></div>
+      <div><div style={subtle}>Membership stability</div><strong>{fingerprint.membership_stability_pct === null ? 'Not established' : `${fingerprint.membership_stability_pct.toFixed(1)}%`}</strong></div>
+      <div><div style={subtle}>Runtime variance</div><strong>{fingerprint.runtime_variance_pct === null ? 'Not established' : `${fingerprint.runtime_variance_pct.toFixed(1)}%`}</strong></div>
+      <div><div style={subtle}>Source observation</div><strong>{fingerprint.source_collected_at ? new Date(fingerprint.source_collected_at).toLocaleString() : 'Unknown'}</strong></div>
+    </div>
+    {warnings.map((warning) => <div key={warning} style={{ color: '#92400e', marginTop: '7px', fontSize: '0.8rem' }}>! {warning}</div>)}
+    <details style={{ marginTop: '10px' }}><summary style={{ cursor: 'pointer', color: '#2563eb' }}>View fixed membership</summary>
+      <div style={{ overflowX: 'auto', marginTop: '8px' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
+        <thead><tr>{['Query ID', 'Calls', 'AQR', 'Total runtime', 'Coverage'].map((label) => <th key={label} style={{ textAlign: 'left', padding: '6px', borderBottom: '1px solid #d1d5db' }}>{label}</th>)}</tr></thead>
+        <tbody>{fingerprint.members.map((member) => <tr key={member.query_id}><td style={{ padding: '6px', borderBottom: '1px solid #e5e7eb' }}><code>{member.query_id.slice(0, 16)}</code></td><td style={{ padding: '6px', borderBottom: '1px solid #e5e7eb' }}>{member.calls}</td><td style={{ padding: '6px', borderBottom: '1px solid #e5e7eb' }}>{member.average_query_runtime_ms.toFixed(2)} ms</td><td style={{ padding: '6px', borderBottom: '1px solid #e5e7eb' }}>{member.total_runtime_ms.toFixed(1)} ms</td><td style={{ padding: '6px', borderBottom: '1px solid #e5e7eb' }}>{member.runtime_coverage_pct.toFixed(1)}%</td></tr>)}</tbody>
+      </table></div>
+    </details>
+  </div>;
+}
+
 function WorkloadTab({ data }: { data: SessionData }) {
   const statementSnapshots = data.evidence.filter((item) => ['pg_stat_statements', 'pg_stats'].includes(item.evidence_type));
   const latest = statementSnapshots[statementSnapshots.length - 1];
   const statements = snapshotRecords(latest, ['statements', 'statement_stats', 'queries']);
   const sorted = [...statements].sort((left, right) => Number(right.total_exec_time ?? 0) - Number(left.total_exec_time ?? 0));
   const totalTime = sorted.reduce((sum, statement) => sum + Number(statement.total_exec_time ?? 0), 0);
-  if (!sorted.length) return <EmptyState title="No workload statements captured" description="The Host Agent must collect pg_stat_statements before workload analysis can begin." />;
+  const fingerprint = data.run.workload_fingerprint_id
+    ? <SelectedFingerprint fingerprintId={data.run.workload_fingerprint_id} />
+    : null;
+  if (!sorted.length) return <div>{fingerprint}<EmptyState title="No workload statements captured" description="The Host Agent must collect pg_stat_statements before workload analysis can begin." /></div>;
   return <div>
+    {fingerprint}
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '12px' }}>
       <div style={card}><div style={subtle}>Visible statements</div><strong>{sorted.length}</strong></div>
       <div style={card}><div style={subtle}>Captured execution time</div><strong>{totalTime.toFixed(1)} ms</strong></div>

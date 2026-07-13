@@ -423,6 +423,14 @@ policy.
 **Responsibilities**: Define a stable objective, capture a baseline, generate
 bounded candidates, measure them comparably, and retain only verified gains.
 
+Fingerprint recommendations rank normalized statements with both average query
+runtime and call count, then select enough members to cover the dominant visible
+runtime. Readiness fails closed when the collector is truncated, coverage is
+below 70%, membership stability is below 60%, or runtime variance exceeds 50%.
+Query text is persisted only when explicitly enabled. Every saved fingerprint
+is an immutable membership version; refreshing a recommendation creates a new
+version so prior tuning sessions remain repeatable.
+
 ```python
 class CandidateOptimizer:
     async def capture_baseline(session: TuningSession) -> BaselineMeasurement
@@ -643,16 +651,36 @@ CREATE INDEX idx_plans_submission ON plans(submission_time);
 -- Workload Fingerprints
 CREATE TABLE workload_fingerprints (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    host_id UUID REFERENCES hosts(id),
-    database_name VARCHAR(255) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    member_query_ids JSONB NOT NULL,
-    selection_window JSONB,
-    runtime_coverage NUMERIC(6,3),
-    created_by VARCHAR(255),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(host_id, database_name, name)
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    database_name VARCHAR(63),
+    name VARCHAR(120) NOT NULL,
+    kind VARCHAR(20) NOT NULL,
+    status VARCHAR(30) NOT NULL,
+    selection_criteria JSONB NOT NULL,
+    diagnostics JSONB NOT NULL,
+    observed_coverage_pct DOUBLE PRECISION NOT NULL,
+    membership_stability_pct DOUBLE PRECISION,
+    runtime_variance_pct DOUBLE PRECISION,
+    source_snapshot_id UUID REFERENCES evidence_snapshots(id),
+    source_collected_at TIMESTAMPTZ,
+    created_by VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE workload_fingerprint_members (
+    fingerprint_id UUID NOT NULL REFERENCES workload_fingerprints(id) ON DELETE CASCADE,
+    query_id TEXT NOT NULL,
+    query_text TEXT,
+    calls BIGINT NOT NULL,
+    average_query_runtime_ms DOUBLE PRECISION NOT NULL,
+    total_runtime_ms DOUBLE PRECISION NOT NULL,
+    runtime_coverage_pct DOUBLE PRECISION NOT NULL,
+    impact_score DOUBLE PRECISION NOT NULL,
+    last_seen_at TIMESTAMPTZ,
+    ordinal INTEGER NOT NULL,
+    PRIMARY KEY (fingerprint_id, query_id)
 );
 
 -- Candidate configurations measured within a tuning session

@@ -213,6 +213,59 @@ async def start_run(
     if host is None:
         raise HTTPException(status_code=409, detail="A registered target host is required")
 
+    fingerprint_targets = {
+        TuningTarget.RECOMMENDED_FINGERPRINT: "recommended",
+        TuningTarget.CUSTOM_FINGERPRINT: "custom",
+    }
+    expected_fingerprint_kind = fingerprint_targets.get(request.tuning_target)
+    if expected_fingerprint_kind and request.workload_fingerprint_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="This optimization target requires a saved workload fingerprint",
+        )
+    if not expected_fingerprint_kind and request.workload_fingerprint_id is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="A workload fingerprint can only be attached to a fingerprint target",
+        )
+    if request.workload_fingerprint_id is not None:
+        fingerprint = await db.fetchrow(
+            """
+            SELECT id, host_id, database_name, kind, status, diagnostics
+            FROM workload_fingerprints
+            WHERE id = $1 AND organization_id = $2
+            """,
+            request.workload_fingerprint_id,
+            principal.organization_id,
+        )
+        if fingerprint is None:
+            raise HTTPException(status_code=409, detail="Workload fingerprint not found")
+        if fingerprint["host_id"] != host["id"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Workload fingerprint belongs to a different target host",
+            )
+        requested_database = request.database_name or host.get("database_name")
+        if fingerprint.get("database_name") and requested_database != fingerprint["database_name"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Workload fingerprint belongs to a different database",
+            )
+        if fingerprint["kind"] != expected_fingerprint_kind:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Select a {expected_fingerprint_kind} workload fingerprint",
+            )
+        if fingerprint["status"] != "ready":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Workload fingerprint is not measurement-ready",
+                    "status": fingerprint["status"],
+                    "diagnostics": _parse_json_dict(fingerprint.get("diagnostics")),
+                },
+            )
+
     preflight = await build_tuning_preflight(
         db,
         principal.organization_id,

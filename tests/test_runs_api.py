@@ -245,6 +245,126 @@ class TestStartRunEndpoint:
         assert "preflight is blocked" in response.text
 
     @pytest.mark.asyncio
+    async def test_fingerprint_target_requires_saved_ready_membership(self, api_client):
+        host_id = uuid4()
+        organization_id = uuid4()
+        fingerprint_id = uuid4()
+        mock_conn = _mock_db_dependency()
+        mock_conn.fetchrow = AsyncMock(
+            side_effect=[
+                {
+                    "id": host_id,
+                    "organization_id": organization_id,
+                    "database_name": "appdb",
+                    "configuration_backend": "alter_system",
+                },
+                {
+                    "id": fingerprint_id,
+                    "host_id": host_id,
+                    "database_name": "appdb",
+                    "kind": "recommended",
+                    "status": "ready",
+                    "diagnostics": {},
+                },
+            ]
+        )
+
+        with patch(
+            "backend.api.runs.build_tuning_preflight",
+            AsyncMock(return_value=_ready_preflight()),
+        ):
+            with patch("backend.dependencies.get_pool") as mock_get_pool:
+                mock_pool = MagicMock()
+                mock_pool.acquire = MagicMock(
+                    return_value=AsyncMock(
+                        __aenter__=AsyncMock(return_value=mock_conn),
+                        __aexit__=AsyncMock(return_value=None),
+                    )
+                )
+                mock_get_pool.return_value = mock_pool
+                response = await api_client.post(
+                    "/api/v1/runs/",
+                    json={
+                        "goal": "Tune measured checkout workload",
+                        "host_id": str(host_id),
+                        "database_name": "appdb",
+                        "tuning_target": "recommended_fingerprint",
+                        "workload_fingerprint_id": str(fingerprint_id),
+                    },
+                )
+
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_target_rejects_unstable_membership(self, api_client):
+        host_id = uuid4()
+        fingerprint_id = uuid4()
+        mock_conn = _mock_db_dependency()
+        mock_conn.fetchrow = AsyncMock(
+            side_effect=[
+                {
+                    "id": host_id,
+                    "organization_id": uuid4(),
+                    "database_name": "appdb",
+                    "configuration_backend": "alter_system",
+                },
+                {
+                    "id": fingerprint_id,
+                    "host_id": host_id,
+                    "database_name": "appdb",
+                    "kind": "custom",
+                    "status": "unstable",
+                    "diagnostics": {"warnings": ["membership changed"]},
+                },
+            ]
+        )
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.post(
+                "/api/v1/runs/",
+                json={
+                    "goal": "Unsafe workload attempt",
+                    "host_id": str(host_id),
+                    "database_name": "appdb",
+                    "tuning_target": "custom_fingerprint",
+                    "workload_fingerprint_id": str(fingerprint_id),
+                },
+            )
+
+        assert response.status_code == 409
+        assert "not measurement-ready" in response.text
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_target_rejects_missing_membership(self, api_client):
+        mock_conn = _mock_db_dependency()
+        with patch("backend.dependencies.get_pool") as mock_get_pool:
+            mock_pool = MagicMock()
+            mock_pool.acquire = MagicMock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_conn),
+                    __aexit__=AsyncMock(return_value=None),
+                )
+            )
+            mock_get_pool.return_value = mock_pool
+            response = await api_client.post(
+                "/api/v1/runs/",
+                json={
+                    "goal": "Missing workload",
+                    "tuning_target": "recommended_fingerprint",
+                },
+            )
+
+        assert response.status_code == 422
+        assert "requires a saved workload fingerprint" in response.text
+
+    @pytest.mark.asyncio
     async def test_reload_only_rejects_restart_parameters(self, api_client):
         mock_conn = _mock_db_dependency()
         with patch("backend.dependencies.get_pool") as mock_get_pool:

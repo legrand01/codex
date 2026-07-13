@@ -11,6 +11,8 @@ import type {
   RunFilters,
   TuningMode,
   TuningPreflight,
+  FingerprintDiagnostics,
+  WorkloadFingerprint,
   EvidenceSnapshot,
   EvidenceListResponse,
   PlanDetail,
@@ -125,6 +127,50 @@ export const runsApi = {
   haltRun(runId: string): Promise<{ message: string }> {
     return request<{ message: string }>(`/runs/${runId}/halt`, {
       method: 'POST',
+    });
+  },
+};
+
+// Workload fingerprint API
+export const fingerprintsApi = {
+  getCandidates(hostId: string, databaseName?: string): Promise<FingerprintDiagnostics> {
+    const params = new URLSearchParams({ host_id: hostId });
+    if (databaseName) params.set('database_name', databaseName);
+    return request<FingerprintDiagnostics>(`/fingerprints/candidates?${params.toString()}`);
+  },
+  async list(hostId?: string, databaseName?: string): Promise<WorkloadFingerprint[]> {
+    const params = new URLSearchParams();
+    if (hostId) params.set('host_id', hostId);
+    if (databaseName) params.set('database_name', databaseName);
+    const response = await request<{ fingerprints: WorkloadFingerprint[] }>(
+      `/fingerprints/?${params.toString()}`,
+    );
+    return response.fingerprints ?? [];
+  },
+  get(fingerprintId: string): Promise<WorkloadFingerprint> {
+    return request<WorkloadFingerprint>(`/fingerprints/${fingerprintId}`);
+  },
+  recommend(data: {
+    host_id: string;
+    database_name?: string;
+    name?: string;
+    include_query_text?: boolean;
+  }): Promise<WorkloadFingerprint> {
+    return request<WorkloadFingerprint>('/fingerprints/recommend', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+  create(data: {
+    host_id: string;
+    database_name?: string;
+    name: string;
+    query_ids: string[];
+    include_query_text?: boolean;
+  }): Promise<WorkloadFingerprint> {
+    return request<WorkloadFingerprint>('/fingerprints/', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   },
 };
