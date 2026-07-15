@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 
 from backend.db.pool import get_pool
 from backend.models.reports import DBAReport
+from backend.services.parameter_catalog import refresh_parameter_dispositions
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,33 @@ class ReportGenerator:
                 run_id,
             )
         return [dict(row) for row in rows]
+
+    async def _fetch_parameter_dispositions(self, run_id: UUID) -> List[Dict]:
+        """Fetch the complete versioned parameter result set for the report."""
+        async with self.pool.acquire() as conn:
+            await refresh_parameter_dispositions(conn, run_id)
+            rows = await conn.fetch(
+                """
+                SELECT catalog_version, setting_name, display_order,
+                       apply_context, bounded_domain_available, selected,
+                       supported_on_target, allowlisted, current_value, unit,
+                       source, sourcefile_or_provider, setting_context,
+                       pending_restart, baseline_value, best_verified_value,
+                       pending_candidate_value, final_disposition,
+                       disposition_reason, updated_at
+                FROM run_parameter_dispositions
+                WHERE run_id = $1 ORDER BY display_order
+                """,
+                run_id,
+            )
+        return [
+            {
+                **dict(row),
+                "updated_at": row["updated_at"].isoformat(),
+                "provenance": LABEL_VERIFIED_FACT,
+            }
+            for row in rows
+        ]
 
     def _build_baseline_summaries(
         self, baseline: Optional[Dict], advisories: List[Dict]
@@ -563,6 +591,7 @@ class ReportGenerator:
             audit_entries = await self._fetch_audit_entries(run_id)
             baseline, advisories = await self._fetch_baseline_context(run_id)
             candidates = await self._fetch_candidates(run_id)
+            parameter_dispositions = await self._fetch_parameter_dispositions(run_id)
 
             # Build report sections
             evidence_summaries = self._build_evidence_summaries(evidence_rows)
@@ -583,6 +612,7 @@ class ReportGenerator:
                 "approval_decisions": approval_decisions,
                 "applied_changes": applied_changes,
                 "verification_results": verification_results,
+                "parameter_dispositions": parameter_dispositions,
             }
 
             # Generate report ID
@@ -626,6 +656,7 @@ class ReportGenerator:
                 approval_decisions=approval_decisions,
                 applied_changes=applied_changes,
                 verification_results=verification_results,
+                parameter_dispositions=parameter_dispositions,
                 generated_at=generated_at,
             )
 

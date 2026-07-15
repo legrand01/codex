@@ -6,6 +6,7 @@ import {
   candidatesApi,
   evidenceApi,
   fingerprintsApi,
+  parameterCatalogApi,
   plansApi,
   reportsApi,
   rollbackApi,
@@ -18,6 +19,7 @@ import type {
   DBAReport,
   EvidenceSnapshot,
   PlanDetail,
+  ParameterDisposition,
   RunDetail,
   TuningCandidate,
   WorkloadFingerprint,
@@ -89,12 +91,14 @@ interface SessionData {
   baseline: BaselineMeasurement | null;
   advisories: AdvisoryFinding[];
   candidates: TuningCandidate[];
+  parameterDispositions: ParameterDisposition[];
   plans: PlanDetail[];
   evidence: EvidenceSnapshot[];
   activity: AuditEntry[];
   report: DBAReport | null;
   refreshPlans: () => void;
   refreshCandidates: () => void;
+  refreshParameterDispositions: () => void;
   refreshRun: () => void;
 }
 
@@ -188,6 +192,7 @@ function PlansTab({ data, openEvidence }: { data: SessionData; openEvidence: (id
       setRejectReason('');
       data.refreshPlans();
       data.refreshCandidates();
+      data.refreshParameterDispositions();
       data.refreshRun();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : `Unable to ${action} plan`);
@@ -235,37 +240,33 @@ function PlansTab({ data, openEvidence }: { data: SessionData; openEvidence: (id
 }
 
 function ConfigurationTab({ data }: { data: SessionData }) {
-  const snapshots = data.evidence.filter((item) => item.evidence_type === 'pg_settings');
-  const earliest = snapshotRecords(snapshots[0], ['settings']);
-  const latest = snapshotRecords(snapshots[snapshots.length - 1], ['settings']);
-  const baseline = new Map(earliest.map((setting) => [String(setting.name), setting]));
-  const current = new Map(latest.map((setting) => [String(setting.name), setting]));
-  const proposals = new Map<string, { change: Record<string, unknown>; status: string }>();
-  for (const plan of data.plans) for (const change of plan.proposed_changes) {
-    const name = String(change.setting_name ?? change.name ?? '');
-    if (name) proposals.set(name, { change, status: plan.status });
-  }
-  const names = data.run.selected_parameters.length
-    ? data.run.selected_parameters
-    : Array.from(new Set([...proposals.keys(), ...baseline.keys()])).slice(0, 20);
-  if (!names.length) return <EmptyState title="No configuration scope recorded" />;
+  const dispositions = data.parameterDispositions;
+  if (!dispositions.length) return <EmptyState title="No versioned parameter catalog is available for this target" />;
   return <div>
-    <div style={{ ...card, marginBottom: '12px' }}><strong>{data.run.configuration_backend.replace(/_/g, ' ')}</strong><div style={subtle}>{names.length} session parameter(s) · baseline and latest observed values shown together</div></div>
+    <div style={{ ...card, marginBottom: '12px', display: 'flex', justifyContent: 'space-between', gap: '14px' }}>
+      <div><strong>{data.run.configuration_backend.replace(/_/g, ' ')}</strong><div style={subtle}>{dispositions.length} catalog entries · {dispositions.filter((item) => item.selected).length} selected for this objective</div></div>
+      <div style={{ ...subtle, textAlign: 'right' }}>Catalog<br /><strong>{dispositions[0].catalog_version}</strong></div>
+    </div>
     <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
-      <thead><tr>{['Parameter', 'Baseline', 'Latest observed', 'Candidate', 'Context', 'Source', 'Disposition'].map((label) => <th key={label} style={{ textAlign: 'left', padding: '9px', borderBottom: '1px solid #d1d5db' }}>{label}</th>)}</tr></thead>
-      <tbody>{names.map((name) => {
-        const before = baseline.get(name) ?? {};
-        const now = current.get(name) ?? before;
-        const proposal = proposals.get(name);
-        const proposedValue = proposal?.change.proposed_value ?? proposal?.change.value;
-        const disposition = proposal ? (proposal.status === 'applied' ? 'changed and verified' : proposal.status.replace(/_/g, ' ')) : 'retained at baseline';
-        return <tr key={name}><td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}><code>{name}</code></td>
-          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(before.setting)} {displayValue(before.unit, '')}</td>
-          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(now.setting)} {displayValue(now.unit, '')}</td>
-          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(proposedValue)}</td>
-          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(now.context)}</td>
-          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(now.source)}</td>
-          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb', textTransform: 'capitalize' }}>{disposition}</td></tr>;
+      <thead><tr>{['Parameter', 'Current', 'Unit', 'Source', 'Source file / provider', 'Setting context', 'Apply', 'Restart', 'Allowlist', 'Baseline', 'Best verified', 'Pending candidate', 'Final disposition'].map((label) => <th key={label} style={{ textAlign: 'left', padding: '9px', borderBottom: '1px solid #d1d5db', whiteSpace: 'nowrap' }}>{label}</th>)}</tr></thead>
+      <tbody>{dispositions.map((item) => {
+        const disposition = item.final_disposition?.replace(/_/g, ' ') ?? 'evaluation pending';
+        const dispositionColor = item.final_disposition === 'changed_and_verified' ? '#15803d'
+          : item.final_disposition === 'retained_at_baseline' || item.final_disposition === 'not_applicable_to_objective' ? '#4b5563'
+            : item.final_disposition ? '#b45309' : '#2563eb';
+        return <tr key={item.setting_name} title={item.disposition_reason ?? undefined}><td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}><code>{item.setting_name}</code>{item.selected && <small style={{ display: 'block', color: '#2563eb' }}>selected</small>}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(item.current_value)}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(item.unit)}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(item.source)}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb', maxWidth: '260px', wordBreak: 'break-word' }}>{displayValue(item.sourcefile_or_provider)}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(item.setting_context)}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{item.apply_context}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb', color: item.pending_restart ? '#b91c1c' : '#166534' }}>{item.pending_restart ? 'pending' : 'no'}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb', color: item.allowlisted ? '#166534' : '#b91c1c' }}>{item.allowlisted ? 'allowed' : 'blocked'}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(item.baseline_value)}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(item.best_verified_value)}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(item.pending_candidate_value)}</td>
+          <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb', color: dispositionColor, fontWeight: 600, textTransform: 'capitalize', minWidth: '190px' }}>{disposition}</td></tr>;
       })}</tbody>
     </table></div>
   </div>;
@@ -375,6 +376,7 @@ function ReportTab({ data, error }: { data: SessionData; error: string | null })
     ['Approval decisions', report.approval_decisions],
     ['Applied changes', report.applied_changes],
     ['Verification results', report.verification_results],
+    ['Parameter dispositions', report.parameter_dispositions.map((item) => ({ ...item }))],
   ];
   return <div style={{ display: 'grid', gap: '14px' }}>
     <div style={{ ...card, display: 'flex', justifyContent: 'space-between', gap: '12px' }}><div><div style={subtle}>Outcome</div><strong style={{ textTransform: 'capitalize' }}>{report.outcome_status.replace(/_/g, ' ')}</strong><p style={{ marginBottom: 0 }}>{report.goal}</p></div><div style={{ ...subtle, textAlign: 'right' }}>Generated<br />{new Date(report.generated_at).toLocaleString()}</div></div>
@@ -395,6 +397,7 @@ function SessionWorkspace() {
   const baselineRequest = useApi<BaselineMeasurement>(() => baselinesApi.get(runId), [runId]);
   const advisoriesRequest = useApi<AdvisoryFinding[]>(() => baselinesApi.listAdvisories(runId), [runId]);
   const candidatesRequest = useApi<TuningCandidate[]>(() => candidatesApi.list(runId), [runId]);
+  const parameterDispositionsRequest = useApi<ParameterDisposition[]>(() => parameterCatalogApi.listDispositions(runId), [runId]);
 
   const selectTab = (next: Tab) => setSearchParams(next === 'overview' ? {} : { tab: next });
   const openEvidence = (snapshotId?: string) => {
@@ -410,15 +413,17 @@ function SessionWorkspace() {
     baseline: baselineRequest.data,
     advisories: advisoriesRequest.data ?? [],
     candidates: candidatesRequest.data ?? [],
+    parameterDispositions: parameterDispositionsRequest.data ?? [],
     plans: plansRequest.data ?? [],
     evidence: evidenceRequest.data ?? [],
     activity: activityRequest.data ?? [],
     report: reportRequest.data,
     refreshPlans: plansRequest.refetch,
     refreshCandidates: candidatesRequest.refetch,
+    refreshParameterDispositions: parameterDispositionsRequest.refetch,
     refreshRun: runRequest.refetch,
   };
-  const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading;
+  const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading || parameterDispositionsRequest.loading;
 
   return <div>
     <Link to="/runs" style={{ color: '#2563eb', fontSize: '0.85rem' }}>← Tuning sessions</Link>

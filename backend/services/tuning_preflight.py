@@ -8,31 +8,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from backend.models.enums import TuningMode, TuningTarget
-
-RELOAD_ONLY_PARAMETERS = (
-    "work_mem",
-    "random_page_cost",
-    "seq_page_cost",
-    "checkpoint_completion_target",
-    "effective_io_concurrency",
-    "max_parallel_workers_per_gather",
-    "max_parallel_workers",
-    "max_wal_size",
-    "min_wal_size",
-    "bgwriter_lru_maxpages",
-    "bgwriter_delay",
-    "effective_cache_size",
-    "maintenance_work_mem",
-    "default_statistics_target",
-    "max_parallel_maintenance_workers",
+from backend.services.parameter_catalog import (
+    RELOAD_ONLY_PARAMETERS,
+    RESTART_PARAMETERS,
 )
-RESTART_PARAMETERS = (
-    "shared_buffers",
-    "max_worker_processes",
-    "wal_buffers",
-    "huge_pages",
-)
-SUPPORTED_PARAMETERS = frozenset(RELOAD_ONLY_PARAMETERS + RESTART_PARAMETERS)
 
 
 class CapabilityCheck(BaseModel):

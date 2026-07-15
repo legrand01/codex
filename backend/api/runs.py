@@ -26,9 +26,11 @@ from backend.models.config import LoopConfig
 from backend.models.enums import RunStatus, TuningMode, TuningTarget, WorkflowStep
 from backend.models.runs import RunSummary
 from backend.security import Principal, require_roles
-from backend.services.tuning_preflight import (
+from backend.services.parameter_catalog import (
     RESTART_PARAMETERS,
     SUPPORTED_PARAMETERS,
+)
+from backend.services.tuning_preflight import (
     TuningPreflightResponse,
     build_tuning_preflight,
 )
@@ -346,7 +348,6 @@ async def start_run(
             run_id,
             host["organization_id"],
         )
-
     return StartRunResponse(
         run_id=str(run_id),
         status="queued",

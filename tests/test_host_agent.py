@@ -336,6 +336,8 @@ class TestPgSettingsCollector:
         assert "data" in result
         assert "settings" in result["data"]
         assert "total_count" in result["data"]
+        assert "sourcefile" in result["data"]["settings"][0]
+        assert "pending_restart" in result["data"]["settings"][0]
 
     @pytest.mark.asyncio
     async def test_includes_utc_timestamp(self, agent):

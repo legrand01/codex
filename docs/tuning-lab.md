@@ -30,6 +30,13 @@ Use the candidate history on the session Overview tab as the primary proof.
 After the session completes, also query the target setting or rerun the
 benchmark to confirm that the final live state matches the recorded best.
 
+The session Configuration tab is the complete parameter ledger. It is resolved
+from the target PostgreSQL major version and platform and shows all 15
+reload-only entries (or 19 in restart-enabled mode), including current/source
+provenance, allowlist state, baseline, best, pending value, pending restart, and
+one final disposition per entry. The final report persists the same ordered
+ledger so a rolled-back or unevaluated setting cannot disappear from history.
+
 Reset the setting to the spill-heavy baseline without deleting the sample data:
 
 ```bash

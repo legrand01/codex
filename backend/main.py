@@ -16,6 +16,7 @@ from backend.api.demo import router as demo_router
 from backend.api.evidence import router as evidence_router
 from backend.api.fingerprints import router as fingerprints_router
 from backend.api.fleet import router as fleet_router
+from backend.api.parameter_catalog import router as parameter_catalog_router
 from backend.api.plans import router as plans_router
 from backend.api.reports import router as reports_router
 from backend.api.rollback import router as rollback_router
@@ -109,6 +110,7 @@ app.include_router(baselines_router)
 app.include_router(candidates_router)
 app.include_router(evidence_router)
 app.include_router(fingerprints_router)
+app.include_router(parameter_catalog_router)
 app.include_router(rollback_router)
 app.include_router(plans_router)
 app.include_router(runs_router)

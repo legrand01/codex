@@ -644,7 +644,7 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     - Persist all candidate measurements and decisions
     - _Requirements: 17.6, 17.7, 17.8_
 
-  - [ ] 23.4 Implement supported parameter catalog and dispositions
+  - [x] 23.4 Implement supported parameter catalog and dispositions
     - Version catalog by PostgreSQL major version and platform
     - Add the 15 reload-only settings and four restart-enabled settings specified in Requirement 18
     - Display current/source/context/pending restart, baseline, best, pending, and final disposition for every catalog entry

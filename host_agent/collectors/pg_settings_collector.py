@@ -12,7 +12,8 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 PG_SETTINGS_QUERY = """
-SELECT name, setting, unit, category, short_desc, context, vartype, source
+SELECT name, setting, unit, category, short_desc, context, vartype, source,
+       sourcefile, pending_restart
 FROM pg_settings
 ORDER BY name;
 """
@@ -45,6 +46,8 @@ async def collect_pg_settings(
                 "context": row["context"],
                 "vartype": row["vartype"],
                 "source": row["source"],
+                "sourcefile": row.get("sourcefile"),
+                "pending_restart": bool(row.get("pending_restart", False)),
             }
             for row in rows
         ]

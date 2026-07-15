@@ -385,7 +385,43 @@ export interface DBAReport {
   approval_decisions: Record<string, unknown>[];
   applied_changes: Record<string, unknown>[];
   verification_results: Record<string, unknown>[];
+  parameter_dispositions: ParameterDisposition[];
   generated_at: string;
+}
+
+export type FinalParameterDisposition =
+  | 'changed_and_verified'
+  | 'retained_at_baseline'
+  | 'blocked_by_policy'
+  | 'restart_required'
+  | 'unsupported_on_target'
+  | 'not_applicable_to_objective'
+  | 'inconclusive_insufficient_evidence';
+
+export interface ParameterDisposition {
+  id: string;
+  run_id: string;
+  host_id: string;
+  catalog_version: string;
+  setting_name: string;
+  display_order: number;
+  apply_context: 'reload' | 'restart';
+  bounded_domain_available: boolean;
+  selected: boolean;
+  supported_on_target: boolean;
+  allowlisted: boolean;
+  current_value: string | null;
+  unit: string | null;
+  source: string | null;
+  sourcefile_or_provider: string | null;
+  setting_context: string | null;
+  pending_restart: boolean;
+  baseline_value: string | null;
+  best_verified_value: string | null;
+  pending_candidate_value: string | null;
+  final_disposition: FinalParameterDisposition | null;
+  disposition_reason: string | null;
+  updated_at: string;
 }
 
 export interface ReportSearchResponse {

@@ -12,6 +12,7 @@ from backend.services.audit_logger import AuditLogger, get_audit_logger
 from backend.services.baseline_measurement import capture_baseline
 from backend.services.candidate_optimizer import CandidateOptimizer, evaluate_candidate
 from backend.services.loop_worker import DBALoopWorker
+from backend.services.parameter_catalog import refresh_parameter_dispositions
 from backend.services.plan_execution import PlanExecutionService
 from backend.services.report_generator import ReportGenerator
 from backend.services.target_executor import TargetPostgresExecutor
@@ -473,6 +474,7 @@ class DurableRunOrchestrator:
                 "UPDATE loop_runs SET completed_at = NOW(), failure_reason = NULL WHERE id = $1",
                 run_id,
             )
+            await refresh_parameter_dispositions(conn, run_id)
         await self.audit_logger.log(
             run_id=run_id,
             actor_type="system",
@@ -495,4 +497,5 @@ class DurableRunOrchestrator:
                 run_id,
                 reason,
             )
+            await refresh_parameter_dispositions(conn, run_id)
         return RunProcessResult("failed", reason)

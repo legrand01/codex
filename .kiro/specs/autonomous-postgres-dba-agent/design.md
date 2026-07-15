@@ -591,6 +591,23 @@ final report includes all catalog entries with one disposition: changed and
 verified, retained, blocked, restart required, unsupported, not applicable, or
 inconclusive.
 
+The control plane materializes catalog versions for PostgreSQL 15 through 18
+and each supported platform family. A tuning session resolves one immutable
+catalog version from the agent-reported major version and enrolled platform.
+Reload-only sessions materialize the 15 online entries; restart-enabled
+sessions materialize those entries plus the four postmaster entries.
+
+`run_parameter_dispositions` is the durable session result set. It contains
+exactly one row per catalog entry in the selected mode and records selection,
+allowlist state, target support, current value, unit, `pg_settings` source,
+source file or provider, PostgreSQL context, pending-restart state, immutable
+baseline, best verified value, pending candidate, final disposition, and
+reason. Active sessions may leave the final disposition empty only while an
+eligible selected setting is still being evaluated. Terminal sessions reconcile
+every row to exactly one Requirement 18 disposition before report generation.
+The Configuration tab and final report both consume this same durable result
+set; neither infers success from plan status.
+
 ## Data Models
 
 ### Core Database Schema

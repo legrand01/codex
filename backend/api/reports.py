@@ -65,6 +65,7 @@ class ReportResponse(BaseModel):
     approval_decisions: List[dict]
     applied_changes: List[dict]
     verification_results: List[dict]
+    parameter_dispositions: List[dict]
     generated_at: datetime
     expires_at: Optional[datetime] = None
 
@@ -238,6 +239,9 @@ async def get_report(
                 approval_decisions=report_content.get("approval_decisions", []),
                 applied_changes=report_content.get("applied_changes", []),
                 verification_results=report_content.get("verification_results", []),
+                parameter_dispositions=report_content.get(
+                    "parameter_dispositions", []
+                ),
                 generated_at=row["generated_at"],
                 expires_at=row["expires_at"],
             )
@@ -268,6 +272,7 @@ async def get_report(
                 approval_decisions=report.approval_decisions,
                 applied_changes=report.applied_changes,
                 verification_results=report.verification_results,
+                parameter_dispositions=report.parameter_dispositions,
                 generated_at=report.generated_at,
                 expires_at=None,
             )

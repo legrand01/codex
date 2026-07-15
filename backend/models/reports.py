@@ -21,4 +21,5 @@ class DBAReport(BaseModel):
     approval_decisions: List[dict]
     applied_changes: List[dict]
     verification_results: List[dict]
+    parameter_dispositions: List[dict]
     generated_at: datetime

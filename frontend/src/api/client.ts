@@ -16,6 +16,7 @@ import type {
   BaselineMeasurement,
   AdvisoryFinding,
   TuningCandidate,
+  ParameterDisposition,
   EvidenceSnapshot,
   EvidenceListResponse,
   PlanDetail,
@@ -191,6 +192,12 @@ export const baselinesApi = {
 export const candidatesApi = {
   list(runId: string): Promise<TuningCandidate[]> {
     return request<TuningCandidate[]>(`/runs/${runId}/candidates`);
+  },
+};
+
+export const parameterCatalogApi = {
+  listDispositions(runId: string): Promise<ParameterDisposition[]> {
+    return request<ParameterDisposition[]>(`/runs/${runId}/parameter-dispositions`);
   },
 };
 
