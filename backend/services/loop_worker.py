@@ -297,7 +297,7 @@ class DBALoopWorker:
 
     async def _capture_target_snapshot(self, run_id: UUID, host_id: UUID) -> StepResult:
         """Capture authoritative target values for every allowlisted setting."""
-        from backend.services.target_executor import TargetPostgresExecutor
+        from backend.services.configuration_backends import get_configuration_backend
 
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
@@ -318,7 +318,7 @@ class DBALoopWorker:
             )
 
         try:
-            executor = TargetPostgresExecutor(self.pool)
+            executor = await get_configuration_backend(self.pool, host_id)
             snapshot = await executor.capture_snapshot(host_id, setting_names)
             collected_at = datetime.now(timezone.utc)
             evidence_data = {
@@ -475,12 +475,12 @@ class DBALoopWorker:
                     proposed_changes, evidence_references,
                     risk_score, confidence_score, uncertainty_explanation,
                     rollback_instructions, pre_change_snapshot,
-                    planning_policy_version, planner_kind
+                    planning_policy_version, planner_kind, configuration_backend
                 )
                 VALUES (
                     $1, $2, (SELECT organization_id FROM hosts WHERE id = $2),
                     $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9::jsonb, $10::jsonb,
-                    $11, $12
+                    $11, $12, (SELECT configuration_backend FROM hosts WHERE id = $2)
                 )
                 RETURNING id
                 """,
@@ -1070,15 +1070,18 @@ class DBALoopWorker:
                     elif step == WorkflowStep.VERIFY:
                         if not active_plan or not active_plan.get("apply_result"):
                             raise RuntimeError("Verify reached without a completed target apply")
-                        from backend.services.target_executor import TargetPostgresExecutor
+                        from backend.services.configuration_backends import (
+                            get_configuration_backend,
+                        )
 
                         expected_values = {
                             change["setting_name"]: change["proposed_value"]
                             for change in active_plan["proposed_changes"]
                         }
-                        verified_values = await TargetPostgresExecutor(
-                            self.pool
-                        ).verify_expected_values(host_id, expected_values)
+                        executor = await get_configuration_backend(self.pool, host_id)
+                        verified_values = await executor.verify_expected_values(
+                            host_id, expected_values
+                        )
                         verification_result = {
                             "configuration_verified": True,
                             "verified_values": verified_values,

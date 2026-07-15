@@ -22,4 +22,5 @@ class DBAReport(BaseModel):
     applied_changes: List[dict]
     verification_results: List[dict]
     parameter_dispositions: List[dict]
+    configuration_versions: List[dict]
     generated_at: datetime

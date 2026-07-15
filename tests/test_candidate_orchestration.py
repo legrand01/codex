@@ -107,8 +107,8 @@ async def test_non_beneficial_candidate_restores_best_before_continuing(decision
             return_value=optimizer,
         ),
         patch(
-            "backend.services.durable_run_orchestrator.TargetPostgresExecutor",
-            return_value=executor,
+            "backend.services.durable_run_orchestrator.get_configuration_backend",
+            new=AsyncMock(return_value=executor),
         ),
         patch(
             "backend.services.durable_run_orchestrator.evaluate_candidate",
@@ -168,8 +168,8 @@ async def test_beneficial_candidate_stays_active_and_search_continues():
             return_value=optimizer,
         ),
         patch(
-            "backend.services.durable_run_orchestrator.TargetPostgresExecutor",
-            return_value=executor,
+            "backend.services.durable_run_orchestrator.get_configuration_backend",
+            new=AsyncMock(return_value=executor),
         ),
         patch(
             "backend.services.durable_run_orchestrator.evaluate_candidate",

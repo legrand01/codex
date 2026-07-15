@@ -551,8 +551,9 @@ class ProviderConfigurationBackend(ConfigurationBackend): ...
    files, database/user settings, or provider settings override a managed key.
 4. Capture the exact previous bytes, mode, owner, checksum, and effective
    values as the rollback snapshot.
-5. Render only allowlisted settings to `99-dbtune-managed.conf.tmp`, fsync the
-   file and directory, validate with `pg_file_settings`, then atomically rename.
+5. Render only allowlisted settings to `conf.d/postgres_tune.conf` through a
+   same-directory temporary file, fsync the file, atomically rename, and fsync
+   the directory. Validate the final path with `pg_file_settings` before reload.
 6. Call `pg_reload_conf()` for reload-context settings and verify effective
    value, `source = 'configuration file'`, and the expected `sourcefile`.
 7. On any failure, atomically restore the previous file bytes or absence,
@@ -564,6 +565,20 @@ class ProviderConfigurationBackend(ConfigurationBackend): ...
 DBTune-managed conf.d file cannot safely control a parameter that still has an
 ALTER SYSTEM entry. The backend preflight therefore rejects such conflicts; it
 does not silently reset configuration owned by another operator.
+
+The control plane never reaches into the target filesystem. It persists an
+authenticated command in `agent_commands`; the Host Agent claims it over its
+outbound HTTPS channel, performs the local operation, and stores the result
+before the worker continues. `configuration_versions` retains exact previous
+bytes internally for recovery, while APIs and reports remove `bytes_b64`.
+Interrupted workers reconcile an `applying` version from the durable command
+result, so a successful file write is not replayed and a partial state retains
+byte-exact rollback provenance.
+
+Managed PostgreSQL services use an explicitly registered provider adapter with
+preflight, stage, poll, restart request, verify, and rollback operations. If no
+adapter is registered for the host platform, the provider backend fails closed;
+it never emulates local file access.
 
 ### 10. Supported Parameter Catalog
 

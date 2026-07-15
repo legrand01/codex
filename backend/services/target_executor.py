@@ -8,6 +8,7 @@ parameters are rejected.
 """
 
 import asyncio
+import copy
 import os
 import re
 from contextlib import asynccontextmanager
@@ -23,7 +24,8 @@ from backend.config import settings
 PRODUCTION_CONFIRMATION = "PRODUCTION_WRITES_AUTHORIZED"
 EXECUTION_LOCK_ID = 7_340_971_311
 SETTING_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
-SUPPORTED_CONTEXTS = {"user", "superuser"}
+SUPPORTED_CONTEXTS = {"user", "superuser", "sighup", "postmaster"}
+RELOAD_CONTEXTS = {"user", "superuser", "sighup"}
 
 
 class TargetExecutionError(RuntimeError):
@@ -80,9 +82,21 @@ class ExecutionResult:
     changed_settings: List[str]
     verified_values: Dict[str, str]
     rolled_back: bool = False
+    pending_restart: List[str] = None
+    backend_snapshot: Optional[Dict[str, Any]] = None
+    configuration_version_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        result["pending_restart"] = self.pending_restart or []
+        backend_snapshot = result.get("backend_snapshot")
+        if isinstance(backend_snapshot, dict):
+            public_snapshot = copy.deepcopy(backend_snapshot)
+            file_snapshot = public_snapshot.get("file")
+            if isinstance(file_snapshot, dict):
+                file_snapshot.pop("bytes_b64", None)
+            result["backend_snapshot"] = public_snapshot
+        return result
 
 
 def _quote_identifier(value: str) -> str:
@@ -229,16 +243,25 @@ class TargetPostgresExecutor:
         errors: List[str] = []
         try:
             changes = self._validate_changes(proposed_changes)
+            restart_authorized = {
+                str(change.get("setting_name")): bool(change.get("restart_authorized"))
+                for change in proposed_changes
+            }
             snapshot = await self.capture_snapshot(host_id, [c["setting_name"] for c in changes])
             for change in changes:
                 setting = snapshot[change["setting_name"]]
                 if setting["context"] not in SUPPORTED_CONTEXTS:
                     errors.append(
                         f"Setting {change['setting_name']!r} has unsupported context "
-                        f"{setting['context']!r}; P0 permits online SET-capable parameters only"
+                        f"{setting['context']!r}; the configuration backend cannot manage it"
                     )
-                if setting["pending_restart"]:
-                    errors.append(f"Setting {change['setting_name']!r} already requires restart")
+                if setting["context"] == "postmaster" and not restart_authorized.get(
+                    change["setting_name"], False
+                ):
+                    errors.append(
+                        f"Setting {change['setting_name']!r} has unsupported context "
+                        "'postmaster' without an explicitly authorized controlled restart"
+                    )
 
             if errors:
                 return DryRunResult(False, snapshot, errors)
@@ -246,11 +269,15 @@ class TargetPostgresExecutor:
             async with self.connect(host_id, for_write=False) as conn:
                 async with conn.transaction():
                     for change in changes:
-                        await conn.fetchval(
-                            "SELECT set_config($1, $2, true)",
-                            change["setting_name"],
-                            change["proposed_value"],
-                        )
+                        context = snapshot[change["setting_name"]]["context"]
+                        if context in {"user", "superuser"}:
+                            await conn.fetchval(
+                                "SELECT set_config($1, $2, true)",
+                                change["setting_name"],
+                                change["proposed_value"],
+                            )
+                        else:
+                            await self._validate_file_setting_value(conn, change)
             return DryRunResult(True, snapshot, [])
         except TargetExecutionError as exc:
             return DryRunResult(False, {}, [str(exc)])
@@ -279,6 +306,9 @@ class TargetPostgresExecutor:
         host_id: UUID,
         proposed_changes: List[dict],
         expected_snapshot: Mapping[str, Mapping[str, Any]],
+        *,
+        plan_id: Optional[UUID] = None,
+        operation_id: Optional[UUID] = None,
     ) -> ExecutionResult:
         changes = self._validate_changes(proposed_changes)
         names = [change["setting_name"] for change in changes]
@@ -301,11 +331,33 @@ class TargetPostgresExecutor:
                 reloaded = await conn.fetchval("SELECT pg_reload_conf()")
                 if reloaded is not True:
                     raise TargetVerificationError("PostgreSQL rejected configuration reload")
-                verified = await self._verify_values(
-                    conn,
-                    {c["setting_name"]: c["proposed_value"] for c in changes},
+                reload_expected = {
+                    c["setting_name"]: c["proposed_value"]
+                    for c in changes
+                    if expected_snapshot[c["setting_name"]]["context"] in RELOAD_CONTEXTS
+                }
+                verified = (
+                    await self._verify_values(conn, reload_expected) if reload_expected else {}
                 )
-                return ExecutionResult(True, applied, verified)
+                pending_restart = [
+                    c["setting_name"]
+                    for c in changes
+                    if expected_snapshot[c["setting_name"]]["context"] == "postmaster"
+                ]
+                for name in pending_restart:
+                    row = await conn.fetchrow(
+                        "SELECT setting, pending_restart, sourcefile "
+                        "FROM pg_settings WHERE name=$1",
+                        name,
+                    )
+                    if row is None or not row["pending_restart"]:
+                        raise TargetVerificationError(
+                            f"Restart setting {name!r} was not staged as pending_restart"
+                        )
+                    verified[name] = str(row["setting"])
+                return ExecutionResult(
+                    True, applied, verified, pending_restart=pending_restart
+                )
             except Exception:
                 if applied:
                     await self._restore_with_connection(conn, expected_snapshot, applied)
@@ -317,6 +369,10 @@ class TargetPostgresExecutor:
         self,
         host_id: UUID,
         snapshot: Mapping[str, Mapping[str, Any]],
+        backend_snapshot: Optional[Mapping[str, Any]] = None,
+        *,
+        plan_id: Optional[UUID] = None,
+        operation_id: Optional[UUID] = None,
     ) -> ExecutionResult:
         if not snapshot:
             raise TargetValidationError("Rollback snapshot is empty")
@@ -366,6 +422,43 @@ class TargetPostgresExecutor:
                     f"Setting {name!r} drifted after approval; expected "
                     f"{expected['value']!r}, found {current!r}"
                 )
+
+    async def _validate_file_setting_value(self, conn, change: Mapping[str, str]) -> None:
+        """Validate SIGHUP/postmaster values without changing the target."""
+        row = await conn.fetchrow(
+            """
+            SELECT vartype, min_val, max_val, enumvals
+            FROM pg_settings
+            WHERE name = $1
+            """,
+            change["setting_name"],
+        )
+        if row is None:
+            raise TargetValidationError(
+                f"Unknown PostgreSQL setting {change['setting_name']!r}"
+            )
+        value = change["proposed_value"].strip()
+        vartype = row["vartype"]
+        if vartype == "bool":
+            if _normalise_value(value) not in {"on", "off", "1", "0"}:
+                raise TargetValidationError(
+                    f"Invalid boolean value for {change['setting_name']!r}: {value!r}"
+                )
+        elif vartype == "enum":
+            if value not in set(row["enumvals"] or []):
+                raise TargetValidationError(
+                    f"Invalid enum value for {change['setting_name']!r}: {value!r}"
+                )
+        elif vartype in {"integer", "real"}:
+            match = re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:\s*[A-Za-z]+)?", value)
+            if not match:
+                raise TargetValidationError(
+                    f"Invalid numeric value for {change['setting_name']!r}: {value!r}"
+                )
+        elif not value:
+            raise TargetValidationError(
+                f"Empty value is not allowed for {change['setting_name']!r}"
+            )
 
     async def _verify_values(self, conn, expected: Mapping[str, Any]) -> Dict[str, str]:
         deadline = asyncio.get_running_loop().time() + settings.target_verify_timeout_sec

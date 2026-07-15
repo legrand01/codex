@@ -77,6 +77,8 @@ services:
       context: .
       dockerfile: docker/Dockerfile.backend
     command: ["python", "host_agent/agent.py"]
+    healthcheck:
+      disable: true
     profiles: ["host-agent"]
     environment:
       - CONTROL_PLANE_URL=http://app:8000
@@ -94,6 +96,8 @@ services:
       - RESTART_CAPABILITY=${RESTART_CAPABILITY:-false}
       - PROVIDER_API_CAPABILITY=${PROVIDER_API_CAPABILITY:-false}
       - MANAGED_FILE_ACCESS=${MANAGED_FILE_ACCESS:-false}
+      - MANAGED_CONF_PATH=${MANAGED_CONF_PATH:-}
+      - COMMAND_POLL_INTERVAL=${COMMAND_POLL_INTERVAL:-2}
       - BUFFER_DIR=/var/lib/dbtune-agent/buffer
       - BUFFER_MAX_BYTES=${BUFFER_MAX_BYTES:-536870912}
     depends_on:
@@ -158,6 +162,7 @@ services:
     volumes:
       - target_postgres_data:/var/lib/postgresql/data
       - ./docker/dbtune-target/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+      - ./docker/dbtune-target/20-managed-conf.sh:/docker-entrypoint-initdb.d/20-managed-conf.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dbtune -d dbtune_target"]
       interval: 3s
@@ -165,6 +170,40 @@ services:
       retries: 30
       start_period: 10s
     restart: unless-stopped
+
+  target-host-agent:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    command: ["python", "host_agent/agent.py"]
+    healthcheck:
+      disable: true
+    profiles: ["tuning-lab"]
+    user: "70:70"
+    environment:
+      - CONTROL_PLANE_URL=http://app:8000
+      - AGENT_HOST_ID=${TARGET_AGENT_HOST_ID:-}
+      - AGENT_TOKEN=${TARGET_AGENT_TOKEN:-}
+      - AGENT_AUTH_REQUIRED=${AGENT_AUTH_REQUIRED:-true}
+      - AGENT_HOSTNAME=${TARGET_AGENT_HOSTNAME:-dbtune-target}
+      - PG_CONNECTION_STRING=postgresql://dbtune:dbtune-lab-only@target-postgres:5432/dbtune_target
+      - PG_SETTINGS_INTERVAL=10
+      - PG_STATS_INTERVAL=5
+      - LOCKS_REPLICATION_INTERVAL=5
+      - OS_METRICS_INTERVAL=5
+      - HEARTBEAT_INTERVAL=10
+      - MANAGED_FILE_ACCESS=true
+      - MANAGED_CONF_PATH=/var/lib/postgresql/data/conf.d/postgres_tune.conf
+      - COMMAND_POLL_INTERVAL=1
+      - BUFFER_DIR=/tmp/dbtune-agent-buffer
+    depends_on:
+      app:
+        condition: service_healthy
+      target-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - target_postgres_data:/var/lib/postgresql/data
 
   target-workload:
     image: postgres:16-alpine

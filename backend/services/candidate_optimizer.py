@@ -410,10 +410,11 @@ class CandidateOptimizer:
                         proposed_changes, evidence_references, risk_score,
                         confidence_score, uncertainty_explanation,
                         rollback_instructions, pre_change_snapshot,
-                        planning_policy_version, planner_kind
+                        planning_policy_version, planner_kind, configuration_backend
                     ) VALUES (
                         $1, $2, $3, $4, $5::jsonb, $6::jsonb, 25, $7,
-                        $8, $9::jsonb, $10::jsonb, $11, $12
+                        $8, $9::jsonb, $10::jsonb, $11, $12,
+                        (SELECT configuration_backend FROM hosts WHERE id = $2)
                     ) RETURNING id
                     """,
                     run_id,

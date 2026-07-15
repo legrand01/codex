@@ -5,10 +5,11 @@ plane and starts with `work_mem=64kB` so the analytical workload spills to disk.
 Eight `pgbench` clients continuously mix account-transfer transactions with a
 large aggregation and sort.
 
-Start it:
+Start it, including the authenticated Host Agent that owns the managed include:
 
 ```bash
-docker compose --profile tuning-lab up -d target-postgres target-workload
+docker compose --profile tuning-lab up -d \
+  target-postgres target-workload target-host-agent
 venv/bin/python scripts/benchmark_tuning_lab.py --runs 5
 ```
 
@@ -37,13 +38,29 @@ provenance, allowlist state, baseline, best, pending value, pending restart, and
 one final disposition per entry. The final report persists the same ordered
 ledger so a rolled-back or unevaluated setting cannot disappear from history.
 
-Reset the setting to the spill-heavy baseline without deleting the sample data:
+The target image sets the spill-heavy baseline in `postgresql.conf` and loads
+`conf.d` after that baseline. It does not use `ALTER SYSTEM`. Approved managed
+changes are written atomically to `conf.d/postgres_tune.conf`; the Configuration
+tab records status, path, checksum, effective values, and rollback outcome.
+Exact previous bytes are retained only in the control plane's private recovery
+record and are redacted from API responses and reports.
+
+Run the end-to-end managed-backend proof after the API and agent are ready:
+
+```bash
+venv/bin/python scripts/verify_managed_backend.py
+```
+
+The proof applies `work_mem=128kB` through the durable agent command channel,
+verifies the managed file as the active source, then removes/restores that file
+byte-for-byte and verifies the original `64kB` source again.
+
+Emergency-reset the managed file to the image baseline without deleting data:
 
 ```bash
 docker compose --profile tuning-lab exec target-postgres \
-  psql -U dbtune -d dbtune_target \
-  -c "ALTER SYSTEM SET work_mem = '64kB'" \
-  -c "SELECT pg_reload_conf()"
+  sh -lc "rm -f /var/lib/postgresql/data/conf.d/postgres_tune.conf && \
+  psql -U dbtune -d dbtune_target -c 'SELECT pg_reload_conf()'"
 ```
 
 Local target DSN:
@@ -58,5 +75,6 @@ for a production database.
 Stop the disposable target and its workload when finished:
 
 ```bash
-docker compose --profile tuning-lab stop target-workload target-postgres
+docker compose --profile tuning-lab stop \
+  target-host-agent target-workload target-postgres
 ```

@@ -229,11 +229,12 @@ async def _seed_demo_database(db, data: Dict[str, Any]) -> None:
                 id, run_id, host_id, status, proposed_changes, evidence_references,
                 risk_score, confidence_score, uncertainty_explanation,
                 rollback_instructions, rejection_reason, approved_by, approved_at,
-                applied_at, submission_time
+                applied_at, submission_time, configuration_backend
             )
             VALUES (
                 $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9,
-                $10::jsonb, $11, $12, $13, $14, $15
+                $10::jsonb, $11, $12, $13, $14, $15,
+                (SELECT configuration_backend FROM hosts WHERE id = $3)
             )
             ON CONFLICT (id) DO UPDATE SET
                 status = EXCLUDED.status,

@@ -1,5 +1,4 @@
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-ALTER SYSTEM SET work_mem = '64kB';
 
 CREATE TABLE accounts (
     id BIGINT PRIMARY KEY,

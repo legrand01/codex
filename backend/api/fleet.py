@@ -149,7 +149,21 @@ class ExecutionPolicyUpdate(BaseModel):
         default=None, pattern="^(alter_system|managed_conf_file|provider)$"
     )
     managed_conf_enrolled: Optional[bool] = None
+    managed_conf_path: Optional[str] = Field(default=None, min_length=1, max_length=1024)
     restart_required_enabled: Optional[bool] = None
+
+
+class AgentCommandResponse(BaseModel):
+    id: UUID
+    action: str
+    payload: Dict[str, Any]
+    expires_at: datetime
+
+
+class AgentCommandResultRequest(BaseModel):
+    succeeded: bool
+    result: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
 
 
 ALLOWED_EVIDENCE_TYPES = {
@@ -581,6 +595,109 @@ async def receive_evidence(
     )
 
 
+@router.get("/{host_id}/commands", response_model=Optional[AgentCommandResponse])
+async def claim_agent_command(
+    host_id: UUID,
+    db=Depends(get_db),
+    _agent_id: UUID = Depends(require_agent),
+) -> Optional[AgentCommandResponse]:
+    """Atomically claim the oldest unexpired command for this authenticated agent."""
+    async with db.transaction():
+        await db.execute(
+            """
+            UPDATE agent_commands
+            SET status = 'expired', completed_at = NOW(), error = 'Command expired'
+            WHERE host_id = $1 AND status IN ('queued', 'claimed') AND expires_at <= NOW()
+            """,
+            host_id,
+        )
+        row = await db.fetchrow(
+            """
+            WITH candidate AS (
+                SELECT id
+                FROM agent_commands
+                WHERE host_id = $1 AND status = 'queued' AND expires_at > NOW()
+                ORDER BY created_at
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            UPDATE agent_commands c
+            SET status = 'claimed', claimed_at = NOW()
+            FROM candidate
+            WHERE c.id = candidate.id
+            RETURNING c.id, c.action, c.payload, c.expires_at
+            """,
+            host_id,
+        )
+    if row is None:
+        return None
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return AgentCommandResponse(
+        id=row["id"], action=row["action"], payload=payload, expires_at=row["expires_at"]
+    )
+
+
+@router.post("/{host_id}/commands/{command_id}/result")
+async def complete_agent_command(
+    host_id: UUID,
+    command_id: UUID,
+    report: AgentCommandResultRequest,
+    db=Depends(get_db),
+    _agent_id: UUID = Depends(require_agent),
+) -> Dict[str, Any]:
+    """Persist a terminal, immutable result for one claimed agent command."""
+    row = await db.fetchrow(
+        """
+        UPDATE agent_commands
+        SET status = $3, result = $4::jsonb, error = $5, completed_at = NOW()
+        WHERE id = $1 AND host_id = $2 AND status = 'claimed'
+        RETURNING id, status
+        """,
+        command_id,
+        host_id,
+        "succeeded" if report.succeeded else "failed",
+        json.dumps(report.result),
+        report.error,
+    )
+    if row is None:
+        existing = await db.fetchrow(
+            "SELECT id, status FROM agent_commands WHERE id = $1 AND host_id = $2",
+            command_id,
+            host_id,
+        )
+        if existing is None:
+            raise HTTPException(status_code=409, detail="Command is missing")
+        matching_terminal = (
+            report.succeeded and existing["status"] == "succeeded"
+        ) or (not report.succeeded and existing["status"] == "failed")
+        if matching_terminal:
+            return {"id": str(existing["id"]), "status": existing["status"]}
+        if existing["status"] == "expired":
+            # Preserve late apply provenance for safe recovery without pretending
+            # that the timed-out command completed within its execution lease.
+            await db.execute(
+                """
+                UPDATE agent_commands
+                SET result = $3::jsonb, error = COALESCE($4, error),
+                    completed_at = NOW()
+                WHERE id = $1 AND host_id = $2 AND status = 'expired'
+                """,
+                command_id,
+                host_id,
+                json.dumps(report.result),
+                report.error or "Agent result arrived after command expiry",
+            )
+            return {
+                "id": str(existing["id"]),
+                "status": "expired",
+                "result_recorded": True,
+            }
+        raise HTTPException(status_code=409, detail="Command is already terminal")
+    return {"id": str(row["id"]), "status": row["status"]}
+
+
 @router.post("/{host_id}/agent-token", response_model=AgentTokenResponse)
 async def rotate_agent_token(
     host_id: UUID,
@@ -620,6 +737,7 @@ async def update_execution_policy(
             configuration_backend = COALESCE($8, configuration_backend),
             managed_conf_enrolled = COALESCE($9, managed_conf_enrolled),
             restart_required_enabled = COALESCE($10, restart_required_enabled),
+            managed_conf_path = COALESCE($11, managed_conf_path),
             updated_at = NOW()
         WHERE id = $1 AND organization_id = $2
         RETURNING id, hostname, health_status, connection_status,
@@ -635,6 +753,7 @@ async def update_execution_policy(
         policy.configuration_backend,
         policy.managed_conf_enrolled,
         policy.restart_required_enabled,
+        policy.managed_conf_path,
     )
     if row is None:
         raise HTTPException(status_code=404, detail=f"Host with id '{host_id}' not found")

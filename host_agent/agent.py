@@ -27,6 +27,7 @@ from collectors.pg_stats_collector import collect_pg_stats
 from collectors.replication_collector import collect_replication
 from collectors.wal_checkpoint_collector import collect_wal_checkpoint
 from config import AgentConfig
+from managed_conf import ManagedPostgresConf
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,8 @@ class HostAgent:
             ),
             asyncio.create_task(self._heartbeat_loop()),
         ]
+        if self.config.managed_file_access:
+            self._tasks.append(asyncio.create_task(self._command_loop()))
 
         logger.info(
             f"Host Agent started for host_id={self.config.host_id}, "
@@ -279,7 +282,7 @@ class HostAgent:
             "reload_permission": False,
             "restart_capability": self.config.restart_capability,
             "provider_api": self.config.provider_api_capability,
-            "managed_file_access": self.config.managed_file_access,
+            "managed_file_access": False,
             "details": {"probes": {}},
             "observed_at": observed_at,
         }
@@ -373,6 +376,24 @@ class HostAgent:
                         )
                     except Exception as exc:
                         probes["reload_permission"] = str(exc)
+
+                if self.config.managed_file_access:
+                    try:
+                        manager = ManagedPostgresConf(
+                            self.conn, self.config.managed_conf_path
+                        )
+                        managed = await manager.preflight([])
+                        report["managed_file_access"] = bool(managed["passed"])
+                        probes["managed_file_access"] = (
+                            "passed"
+                            if managed["passed"]
+                            else "; ".join(managed["errors"])
+                        )
+                        report["details"]["managed_conf"] = managed.get(
+                            "environment", {}
+                        )
+                    except Exception as exc:
+                        probes["managed_file_access"] = str(exc)
             except Exception as exc:
                 probes["database"] = str(exc)
 
@@ -386,6 +407,92 @@ class HostAgent:
             probes["system_metrics"] = str(exc)
 
         return report
+
+    async def _command_loop(self) -> None:
+        """Poll the outbound-only control channel for managed-file commands."""
+        while self._running:
+            try:
+                await self._claim_and_execute_command()
+            except Exception as exc:
+                logger.error("Managed command polling error: %s", exc)
+            await asyncio.sleep(self.config.command_poll_interval)
+
+    async def _claim_and_execute_command(self) -> None:
+        if self._http_client is None:
+            return
+        url = f"{self.config.control_plane_url}/api/v1/fleet/{self.config.host_id}/commands"
+        response = await self._http_client.get(url, headers=self._agent_headers())
+        response.raise_for_status()
+        command = response.json()
+        if command is None:
+            return
+        command_id = command["id"]
+        expires_at = datetime.now(timezone.utc)
+        try:
+            expires_at = datetime.fromisoformat(
+                str(command["expires_at"]).replace("Z", "+00:00")
+            )
+            if expires_at <= datetime.now(timezone.utc):
+                raise RuntimeError("Managed command expired before local execution")
+            result = await self._execute_command(command["action"], command["payload"])
+            report = {"succeeded": True, "result": result}
+        except Exception as exc:
+            logger.exception("Managed command %s failed", command_id)
+            report = {"succeeded": False, "result": {}, "error": str(exc)}
+        result_url = f"{url}/{command_id}/result"
+        await self._report_command_result(result_url, report, expires_at)
+
+    async def _report_command_result(
+        self, result_url: str, report: Dict[str, Any], expires_at: datetime
+    ) -> None:
+        """Retry the idempotent completion until acknowledged or safely timed out."""
+        if self._http_client is None:
+            raise RuntimeError("Control-plane HTTP client is unavailable")
+        deadline = max(
+            expires_at.timestamp() + 30,
+            datetime.now(timezone.utc).timestamp() + 10,
+        )
+        delay = 0.5
+        last_error: Optional[Exception] = None
+        payload = json.loads(json.dumps(report, default=str))
+        while datetime.now(timezone.utc).timestamp() < deadline:
+            try:
+                completion = await self._http_client.post(
+                    result_url,
+                    json=payload,
+                    headers=self._agent_headers(),
+                )
+                completion.raise_for_status()
+                return
+            except (httpx.HTTPError, RuntimeError) as exc:
+                last_error = exc
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 5)
+        raise RuntimeError(
+            f"Managed command result was not acknowledged: {last_error}"
+        )
+
+    async def _execute_command(self, action: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.config.managed_file_access:
+            raise RuntimeError("Managed file access is not enrolled on this agent")
+        requested_path = payload.get("managed_conf_path")
+        if requested_path != self.config.managed_conf_path:
+            raise RuntimeError("Command path differs from the locally enrolled managed path")
+        manager = ManagedPostgresConf(self.conn, self.config.managed_conf_path)
+        if action == "managed_conf_preflight":
+            return await manager.preflight(
+                payload.get("changes") or [], payload.get("expected_snapshot") or {}
+            )
+        if action == "managed_conf_apply":
+            return await manager.apply(
+                payload.get("changes") or [], payload.get("expected_snapshot") or {}
+            )
+        if action == "managed_conf_rollback":
+            return await manager.rollback(
+                payload.get("backend_snapshot") or {},
+                payload.get("expected_snapshot") or {},
+            )
+        raise RuntimeError(f"Unsupported agent command {action!r}")
 
     async def report_capabilities(self) -> Optional[Dict[str, Any]]:
         """Probe and publish a fresh capability snapshot to the Control Plane."""

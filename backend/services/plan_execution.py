@@ -8,7 +8,7 @@ from uuid import UUID
 
 from backend.models.enums import PlanStatus
 from backend.services.audit_logger import AuditLogger, get_audit_logger
-from backend.services.target_executor import TargetPostgresExecutor
+from backend.services.configuration_backends import get_configuration_backend
 
 
 class PlanExecutionError(RuntimeError):
@@ -37,16 +37,23 @@ class PlanExecutionService:
         pool,
         *,
         audit_logger: Optional[AuditLogger] = None,
-        target_executor: Optional[TargetPostgresExecutor] = None,
+        target_executor=None,
     ) -> None:
         self.pool = pool
         self.audit_logger = audit_logger or get_audit_logger()
-        self.target_executor = target_executor or TargetPostgresExecutor(pool)
+        # Retained as an injection seam for focused executor tests.
+        self.target_executor = target_executor
+
+    async def _backend(self, host_id: UUID):
+        if self.target_executor is not None:
+            return self.target_executor
+        return await get_configuration_backend(self.pool, host_id)
 
     async def execute(self, plan_id: UUID) -> PlanExecutionOutcome:
         plan = await self._load_plan(plan_id)
         self._validate_plan(plan)
         operation = await self._claim_operation(plan)
+        backend = await self._backend(plan["host_id"])
 
         if operation["status"] == "succeeded":
             return PlanExecutionOutcome(
@@ -62,7 +69,7 @@ class PlanExecutionService:
                 claimed_at = claimed_at.replace(tzinfo=timezone.utc)
             if claimed_at >= stale_before:
                 raise PlanExecutionError(f"Plan {plan_id} is already being applied")
-            recovered = await self._recover_stale_operation(plan, operation)
+            recovered = await self._recover_stale_operation(plan, operation, backend)
             if recovered is not None:
                 return recovered
 
@@ -82,10 +89,12 @@ class PlanExecutionService:
         )
 
         try:
-            execution = await self.target_executor.apply(
+            execution = await backend.apply(
                 plan["host_id"],
                 _parse_json(plan["proposed_changes"]),
                 _parse_json(plan["pre_change_snapshot"]),
+                plan_id=plan_id,
+                operation_id=operation["id"],
             )
             result = execution.to_dict()
             try:
@@ -100,11 +109,22 @@ class PlanExecutionService:
                         "plan_id": str(plan_id),
                         "operation_id": str(operation["id"]),
                         "verified_values": execution.verified_values,
+                        "configuration_backend": plan.get("configuration_backend"),
+                        "pending_restart": execution.pending_restart or [],
                     },
                 )
             except Exception:
-                await self.target_executor.rollback(
-                    plan["host_id"], _parse_json(plan["pre_change_snapshot"])
+                rollback_snapshot = dict(execution.backend_snapshot or {})
+                if execution.configuration_version_id:
+                    rollback_snapshot["configuration_version_id"] = (
+                        execution.configuration_version_id
+                    )
+                await backend.rollback(
+                    plan["host_id"],
+                    _parse_json(plan["pre_change_snapshot"]),
+                    rollback_snapshot,
+                    plan_id=plan_id,
+                    operation_id=operation["id"],
                 )
                 raise
 
@@ -132,14 +152,15 @@ class PlanExecutionService:
             raise PlanExecutionError(f"Plan {plan_id} application failed: {exc}") from exc
 
     async def _recover_stale_operation(
-        self, plan: Dict[str, Any], operation: Dict[str, Any]
+        self, plan: Dict[str, Any], operation: Dict[str, Any], backend=None
     ) -> Optional[PlanExecutionOutcome]:
         """Reconcile a worker crash without replaying an uncertain target write."""
+        backend = backend or await self._backend(plan["host_id"])
         changes = _parse_json(plan["proposed_changes"])
         snapshot = _parse_json(plan["pre_change_snapshot"])
         expected = {change["setting_name"]: change["proposed_value"] for change in changes}
         original = {name: state["value"] for name, state in snapshot.items()}
-        current = await self.target_executor.read_current_values(plan["host_id"], list(expected))
+        current = await backend.read_current_values(plan["host_id"], list(expected))
 
         def matches(values: Dict[str, Any]) -> bool:
             return all(
@@ -148,13 +169,26 @@ class PlanExecutionService:
             )
 
         if matches(expected):
-            result = {
-                "succeeded": True,
-                "changed_settings": list(expected),
-                "verified_values": current,
-                "rolled_back": False,
-                "recovered_after_worker_restart": True,
-            }
+            reconciler = getattr(type(backend), "reconcile_applied", None)
+            reconciled = None
+            if reconciler is not None:
+                reconciled = await backend.reconcile_applied(
+                    plan["host_id"],
+                    plan_id=plan["id"],
+                    operation_id=operation["id"],
+                    verified_values=current,
+                )
+            result = (
+                reconciled.to_dict()
+                if reconciled is not None
+                else {
+                    "succeeded": True,
+                    "changed_settings": list(expected),
+                    "verified_values": current,
+                    "rolled_back": False,
+                }
+            )
+            result["recovered_after_worker_restart"] = True
             await self._complete(plan["id"], operation["id"], result)
             await self.audit_logger.log(
                 run_id=plan["run_id"],
@@ -171,7 +205,22 @@ class PlanExecutionService:
             await self._reset_operation(operation["id"])
             return None
 
-        await self.target_executor.rollback(plan["host_id"], snapshot)
+        operation_result = _parse_json(operation.get("result")) or {}
+        backend_snapshot = operation_result.get("backend_snapshot") or {}
+        if operation_result.get("configuration_version_id"):
+            backend_snapshot["configuration_version_id"] = operation_result[
+                "configuration_version_id"
+            ]
+        if backend_snapshot:
+            await backend.rollback(
+                plan["host_id"],
+                snapshot,
+                backend_snapshot,
+                plan_id=plan["id"],
+                operation_id=operation["id"],
+            )
+        else:
+            await backend.rollback(plan["host_id"], snapshot)
         await self._fail(
             plan["id"],
             operation["id"],
@@ -198,7 +247,8 @@ class PlanExecutionService:
             row = await conn.fetchrow(
                 """
                 SELECT id, run_id, host_id, status, proposed_changes,
-                       pre_change_snapshot, approved_by, approved_at
+                       pre_change_snapshot, approved_by, approved_at,
+                       configuration_backend
                 FROM plans
                 WHERE id = $1
                 """,
@@ -229,18 +279,19 @@ class PlanExecutionService:
                 """
                 INSERT INTO write_operations (
                     plan_id, host_id, operation_type, idempotency_key,
-                    status, pre_change_snapshot
-                ) VALUES ($1, $2, 'apply', $3, 'pending', $4::jsonb)
+                    status, pre_change_snapshot, configuration_backend
+                ) VALUES ($1, $2, 'apply', $3, 'pending', $4::jsonb, $5)
                 ON CONFLICT (plan_id, operation_type) DO NOTHING
                 """,
                 plan["id"],
                 plan["host_id"],
                 key,
                 json.dumps(_parse_json(plan["pre_change_snapshot"])),
+                plan.get("configuration_backend"),
             )
             row = await conn.fetchrow(
                 """
-                SELECT id, status, result, claimed_at
+                SELECT id, status, result, claimed_at, backend_snapshot
                 FROM write_operations
                 WHERE plan_id = $1 AND operation_type = 'apply'
                 """,
@@ -280,12 +331,14 @@ class PlanExecutionService:
                     """
                     UPDATE write_operations
                     SET status = 'succeeded', result = $2::jsonb,
+                        backend_snapshot = $4::jsonb,
                         completed_at = $3, error = NULL
                     WHERE id = $1 AND status = 'in_progress'
                     """,
                     operation_id,
                     json.dumps(result),
                     now,
+                    json.dumps(result.get("backend_snapshot") or {}),
                 )
                 await conn.execute(
                     """

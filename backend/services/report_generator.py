@@ -217,6 +217,41 @@ class ReportGenerator:
             for row in rows
         ]
 
+    async def _fetch_configuration_versions(self, run_id: UUID) -> List[Dict]:
+        """Fetch apply/rollback history without exposing exact rollback bytes."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT v.id, v.plan_id, v.configuration_backend, v.status,
+                       v.managed_conf_path, v.parameters,
+                       (v.backend_snapshot #- '{file,bytes_b64}') AS backend_snapshot,
+                       (v.apply_result #- '{backend_snapshot,file,bytes_b64}') AS apply_result,
+                       v.rollback_result, v.error,
+                       v.created_at, v.applied_at, v.rolled_back_at
+                FROM configuration_versions v
+                JOIN plans p ON p.id = v.plan_id
+                WHERE p.run_id = $1 ORDER BY v.created_at
+                """,
+                run_id,
+            )
+        result = []
+        for row in rows:
+            item = dict(row)
+            for json_key, default in (
+                ("parameters", []),
+                ("backend_snapshot", {}),
+                ("apply_result", None),
+                ("rollback_result", None),
+            ):
+                item[json_key] = _decode_json(item.get(json_key), default)
+            item["id"] = str(item["id"])
+            item["plan_id"] = str(item["plan_id"]) if item["plan_id"] else None
+            for key in ("created_at", "applied_at", "rolled_back_at"):
+                item[key] = item[key].isoformat() if item.get(key) else None
+            item["provenance"] = LABEL_VERIFIED_FACT
+            result.append(item)
+        return result
+
     def _build_baseline_summaries(
         self, baseline: Optional[Dict], advisories: List[Dict]
     ) -> List[Dict]:
@@ -592,6 +627,7 @@ class ReportGenerator:
             baseline, advisories = await self._fetch_baseline_context(run_id)
             candidates = await self._fetch_candidates(run_id)
             parameter_dispositions = await self._fetch_parameter_dispositions(run_id)
+            configuration_versions = await self._fetch_configuration_versions(run_id)
 
             # Build report sections
             evidence_summaries = self._build_evidence_summaries(evidence_rows)
@@ -613,6 +649,7 @@ class ReportGenerator:
                 "applied_changes": applied_changes,
                 "verification_results": verification_results,
                 "parameter_dispositions": parameter_dispositions,
+                "configuration_versions": configuration_versions,
             }
 
             # Generate report ID
@@ -621,7 +658,7 @@ class ReportGenerator:
 
             # Persist the report
             async with self.pool.acquire() as conn:
-                await conn.execute(
+                persisted_report_id = await conn.fetchval(
                     """
                     INSERT INTO dba_reports (id, run_id, goal, host_id, outcome_status,
                                            report_content, generated_at, expires_at)
@@ -635,6 +672,7 @@ class ReportGenerator:
                         report_content = EXCLUDED.report_content,
                         generated_at = EXCLUDED.generated_at,
                         expires_at = EXCLUDED.expires_at
+                    RETURNING id
                     """,
                     report_id,
                     run_id,
@@ -647,7 +685,7 @@ class ReportGenerator:
 
             # Return the DBAReport model
             return DBAReport(
-                id=report_id,
+                id=persisted_report_id,
                 run_id=run_id,
                 goal=run["goal"],
                 outcome_status=outcome_status,
@@ -657,6 +695,7 @@ class ReportGenerator:
                 applied_changes=applied_changes,
                 verification_results=verification_results,
                 parameter_dispositions=parameter_dispositions,
+                configuration_versions=configuration_versions,
                 generated_at=generated_at,
             )
 

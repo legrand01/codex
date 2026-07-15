@@ -156,6 +156,9 @@ All environment variables can be configured in a `.env` file at the project root
 | `PG_STATS_INTERVAL_SEC` | pg_stat collection interval (5-600s) | `30` | `15` |
 | `LOCKS_REPLICATION_INTERVAL_SEC` | Locks/replication collection interval (5-300s) | `15` | `30` |
 | `OS_METRICS_INTERVAL_SEC` | OS metrics collection interval (5-300s) | `15` | `10` |
+| `MANAGED_FILE_ACCESS` | Explicitly enroll Host Agent file ownership | `false` | `true` |
+| `MANAGED_CONF_PATH` | Exact enrolled PostgreSQL include path | empty | `/var/lib/postgresql/data/conf.d/postgres_tune.conf` |
+| `COMMAND_POLL_INTERVAL` | Host Agent command polling interval (seconds) | `2` | `1` |
 
 ---
 

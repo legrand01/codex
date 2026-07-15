@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     target_connect_timeout_sec: int = 10
     target_command_timeout_sec: int = 30
     target_verify_timeout_sec: int = 10
+    agent_command_timeout_sec: int = 120
+    agent_command_poll_interval_sec: float = 0.25
 
     # Loop Worker defaults
     max_iterations: int = 10

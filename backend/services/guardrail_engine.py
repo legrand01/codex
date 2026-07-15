@@ -582,9 +582,9 @@ async def execute_dry_run(
     # unit-test fixtures and must be opted into explicitly.
     if settings.require_live_target_dry_run:
         if target_executor is None:
-            from backend.services.target_executor import TargetPostgresExecutor
+            from backend.services.configuration_backends import get_configuration_backend
 
-            target_executor = TargetPostgresExecutor(pool)
+            target_executor = await get_configuration_backend(pool, host_id)
         try:
             live_result = await asyncio.wait_for(
                 target_executor.dry_run(host_id, proposed_changes),

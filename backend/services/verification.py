@@ -377,7 +377,7 @@ async def _initiate_rollback(plan_id: UUID, pool=None) -> None:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT host_id, rollback_instructions, pre_change_snapshot
+                SELECT host_id, rollback_instructions, pre_change_snapshot, apply_result
                 FROM plans
                 WHERE id = $1
                 """,
@@ -392,10 +392,13 @@ async def _initiate_rollback(plan_id: UUID, pool=None) -> None:
 
         instructions = row["rollback_instructions"]
         snapshot = row["pre_change_snapshot"]
+        apply_result = row["apply_result"] or {}
         if isinstance(instructions, str):
             instructions = json.loads(instructions)
         if isinstance(snapshot, str):
             snapshot = json.loads(snapshot)
+        if isinstance(apply_result, str):
+            apply_result = json.loads(apply_result)
 
         await execute_rollback(
             plan_id,
@@ -403,6 +406,7 @@ async def _initiate_rollback(plan_id: UUID, pool=None) -> None:
             host_id=row["host_id"],
             pre_change_snapshot=snapshot,
             control_pool=pool,
+            backend_snapshot=apply_result.get("backend_snapshot"),
         )
 
         async with pool.acquire() as conn:

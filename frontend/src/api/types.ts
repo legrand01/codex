@@ -386,6 +386,7 @@ export interface DBAReport {
   applied_changes: Record<string, unknown>[];
   verification_results: Record<string, unknown>[];
   parameter_dispositions: ParameterDisposition[];
+  configuration_versions: ConfigurationVersion[];
   generated_at: string;
 }
 
@@ -422,6 +423,23 @@ export interface ParameterDisposition {
   final_disposition: FinalParameterDisposition | null;
   disposition_reason: string | null;
   updated_at: string;
+}
+
+export interface ConfigurationVersion {
+  id: string;
+  host_id: string;
+  plan_id: string | null;
+  configuration_backend: string;
+  status: 'pending' | 'applying' | 'active' | 'pending_restart' | 'rolling_back' | 'rolled_back' | 'failed';
+  managed_conf_path: string | null;
+  parameters: Record<string, unknown>[];
+  backend_snapshot: Record<string, unknown>;
+  apply_result: Record<string, unknown> | null;
+  rollback_result: Record<string, unknown> | null;
+  error: string | null;
+  created_at: string;
+  applied_at: string | null;
+  rolled_back_at: string | null;
 }
 
 export interface ReportSearchResponse {

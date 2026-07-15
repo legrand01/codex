@@ -16,6 +16,7 @@ import type {
   AuditEntry,
   AdvisoryFinding,
   BaselineMeasurement,
+  ConfigurationVersion,
   DBAReport,
   EvidenceSnapshot,
   PlanDetail,
@@ -92,6 +93,7 @@ interface SessionData {
   advisories: AdvisoryFinding[];
   candidates: TuningCandidate[];
   parameterDispositions: ParameterDisposition[];
+  configurationVersions: ConfigurationVersion[];
   plans: PlanDetail[];
   evidence: EvidenceSnapshot[];
   activity: AuditEntry[];
@@ -241,13 +243,20 @@ function PlansTab({ data, openEvidence }: { data: SessionData; openEvidence: (id
 
 function ConfigurationTab({ data }: { data: SessionData }) {
   const dispositions = data.parameterDispositions;
-  if (!dispositions.length) return <EmptyState title="No versioned parameter catalog is available for this target" />;
   return <div>
     <div style={{ ...card, marginBottom: '12px', display: 'flex', justifyContent: 'space-between', gap: '14px' }}>
       <div><strong>{data.run.configuration_backend.replace(/_/g, ' ')}</strong><div style={subtle}>{dispositions.length} catalog entries · {dispositions.filter((item) => item.selected).length} selected for this objective</div></div>
-      <div style={{ ...subtle, textAlign: 'right' }}>Catalog<br /><strong>{dispositions[0].catalog_version}</strong></div>
+      <div style={{ ...subtle, textAlign: 'right' }}>Catalog<br /><strong>{dispositions[0]?.catalog_version ?? 'Unavailable'}</strong></div>
     </div>
-    <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+    {data.configurationVersions.length > 0 && <div style={{ ...card, marginBottom: '12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '9px' }}><div><div style={subtle}>Configuration history</div><strong>Apply and rollback provenance</strong></div><span style={subtle}>{data.configurationVersions.length} version(s)</span></div>
+      <div style={{ display: 'grid', gap: '8px' }}>{data.configurationVersions.map((version) => <div key={version.id} style={{ borderTop: '1px solid #e5e7eb', paddingTop: '8px', display: 'grid', gridTemplateColumns: 'minmax(130px, .7fr) minmax(180px, 1.4fr) minmax(150px, 1fr)', gap: '10px', fontSize: '0.8rem' }}>
+        <div><strong style={{ textTransform: 'capitalize', color: version.status === 'active' ? '#15803d' : version.status === 'failed' ? '#b91c1c' : '#b45309' }}>{version.status.replace(/_/g, ' ')}</strong><div style={subtle}>{new Date(version.created_at).toLocaleString()}</div></div>
+        <div><code>{version.managed_conf_path ?? version.configuration_backend}</code><div style={subtle}>{version.parameters.map((item) => String(item.setting_name ?? '')).filter(Boolean).join(', ') || 'No parameters recorded'}</div></div>
+        <div><span style={subtle}>Previous checksum</span><br /><code>{String((version.backend_snapshot.file as Record<string, unknown> | undefined)?.checksum ?? 'file absent').slice(0, 16)}</code>{version.error && <div style={{ color: '#b91c1c' }}>{version.error}</div>}</div>
+      </div>)}</div>
+    </div>}
+    {!dispositions.length ? <EmptyState title="No versioned parameter catalog is available for this target" /> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
       <thead><tr>{['Parameter', 'Current', 'Unit', 'Source', 'Source file / provider', 'Setting context', 'Apply', 'Restart', 'Allowlist', 'Baseline', 'Best verified', 'Pending candidate', 'Final disposition'].map((label) => <th key={label} style={{ textAlign: 'left', padding: '9px', borderBottom: '1px solid #d1d5db', whiteSpace: 'nowrap' }}>{label}</th>)}</tr></thead>
       <tbody>{dispositions.map((item) => {
         const disposition = item.final_disposition?.replace(/_/g, ' ') ?? 'evaluation pending';
@@ -268,7 +277,7 @@ function ConfigurationTab({ data }: { data: SessionData }) {
           <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb' }}>{displayValue(item.pending_candidate_value)}</td>
           <td style={{ padding: '9px', borderBottom: '1px solid #e5e7eb', color: dispositionColor, fontWeight: 600, textTransform: 'capitalize', minWidth: '190px' }}>{disposition}</td></tr>;
       })}</tbody>
-    </table></div>
+    </table></div>}
   </div>;
 }
 
@@ -398,6 +407,7 @@ function SessionWorkspace() {
   const advisoriesRequest = useApi<AdvisoryFinding[]>(() => baselinesApi.listAdvisories(runId), [runId]);
   const candidatesRequest = useApi<TuningCandidate[]>(() => candidatesApi.list(runId), [runId]);
   const parameterDispositionsRequest = useApi<ParameterDisposition[]>(() => parameterCatalogApi.listDispositions(runId), [runId]);
+  const configurationVersionsRequest = useApi<ConfigurationVersion[]>(() => parameterCatalogApi.listConfigurationVersions(runId), [runId]);
 
   const selectTab = (next: Tab) => setSearchParams(next === 'overview' ? {} : { tab: next });
   const openEvidence = (snapshotId?: string) => {
@@ -414,6 +424,7 @@ function SessionWorkspace() {
     advisories: advisoriesRequest.data ?? [],
     candidates: candidatesRequest.data ?? [],
     parameterDispositions: parameterDispositionsRequest.data ?? [],
+    configurationVersions: configurationVersionsRequest.data ?? [],
     plans: plansRequest.data ?? [],
     evidence: evidenceRequest.data ?? [],
     activity: activityRequest.data ?? [],
@@ -423,7 +434,7 @@ function SessionWorkspace() {
     refreshParameterDispositions: parameterDispositionsRequest.refetch,
     refreshRun: runRequest.refetch,
   };
-  const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading || parameterDispositionsRequest.loading;
+  const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading || parameterDispositionsRequest.loading || configurationVersionsRequest.loading;
 
   return <div>
     <Link to="/runs" style={{ color: '#2563eb', fontSize: '0.85rem' }}>← Tuning sessions</Link>

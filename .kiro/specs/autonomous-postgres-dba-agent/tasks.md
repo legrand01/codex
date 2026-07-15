@@ -657,42 +657,42 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     - Add noisy-workload, low-coverage, regression, and convergence integration cases
     - _Requirements: 17.6, 17.7, 17.8, 17.9, 18.4_
 
-- [ ] 24. Pluggable configuration backends and managed conf.d ownership
+- [x] 24. Pluggable configuration backends and managed conf.d ownership
 
-  - [ ] 24.1 Define ConfigurationBackend protocol and router
+  - [x] 24.1 Define ConfigurationBackend protocol and router
     - Implement common preflight, snapshot, apply, rollback, and verification result models
     - Select backend from explicit per-host enrollment and platform capability
     - Record backend in sessions, plans, configuration versions, audit entries, and events
     - _Requirements: 19.1, 19.10_
 
-  - [ ] 24.2 Retain and generalize AlterSystemBackend
+  - [x] 24.2 Retain and generalize AlterSystemBackend
     - Preserve PostgreSQL 15+ parameter-scoped ALTER SYSTEM and pg_reload_conf path
     - Verify source/provenance and exact snapshot restoration
     - Support the complete reload-only catalog and staged restart parameters
     - _Requirements: 18.1, 18.2, 19.2, 19.9_
 
-  - [ ] 24.3 Implement self-managed ManagedConfFileBackend in Host_Agent
+  - [x] 24.3 Implement self-managed ManagedConfFileBackend in Host_Agent
     - Enroll only verified self-managed hosts with configured managed path
     - Verify config_file/include_dir ordering, permissions, ownership, disk space, and same-filesystem rename
     - Detect higher-precedence command-line, postgres.auto.conf, later-include, database/user, and provider conflicts
-    - Render allowlisted settings to `99-dbtune-managed.conf`
+    - Render allowlisted settings to `conf.d/postgres_tune.conf`
     - Atomic temp-write + fsync + pg_file_settings validation + rename + pg_reload_conf
     - Verify effective value and sourcefile
     - _Requirements: 19.3, 19.4, 19.5, 19.6_
 
-  - [ ] 24.4 Implement byte-exact managed-file rollback and recovery
+  - [x] 24.4 Implement byte-exact managed-file rollback and recovery
     - Persist checksum, exact prior bytes/absence, owner, mode, and target values before apply
     - Restore previous bytes or remove file atomically on rollback/failure
     - Reload and verify both value and provenance
     - Reconcile interrupted apply operations from durable configuration-version state
     - _Requirements: 19.7, 19.8, 19.9_
 
-  - [ ] 24.5 Add provider-managed configuration adapter interface
+  - [x] 24.5 Add provider-managed configuration adapter interface
     - Define staged apply/reboot/poll/verify contract for RDS/Aurora, Cloud SQL, Aiven, and future providers
     - Do not emulate file access on managed services
     - _Requirements: 19.1, 19.10_
 
-  - [ ]* 24.6 Test configuration ownership safety
+  - [x] 24.6 Test configuration ownership safety
     - Property 39: managed-file atomicity
     - Property 40: higher-precedence conflict blocks apply
     - Property 41: byte-exact rollback and provenance restoration

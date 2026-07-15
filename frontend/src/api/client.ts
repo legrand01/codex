@@ -17,6 +17,7 @@ import type {
   AdvisoryFinding,
   TuningCandidate,
   ParameterDisposition,
+  ConfigurationVersion,
   EvidenceSnapshot,
   EvidenceListResponse,
   PlanDetail,
@@ -198,6 +199,9 @@ export const candidatesApi = {
 export const parameterCatalogApi = {
   listDispositions(runId: string): Promise<ParameterDisposition[]> {
     return request<ParameterDisposition[]>(`/runs/${runId}/parameter-dispositions`);
+  },
+  listConfigurationVersions(runId: string): Promise<ConfigurationVersion[]> {
+    return request<ConfigurationVersion[]>(`/runs/${runId}/configuration-versions`);
   },
 };
 

@@ -167,6 +167,7 @@ async def execute_rollback(
     pre_change_snapshot: Optional[dict] = None,
     control_pool=None,
     target_executor=None,
+    backend_snapshot: Optional[dict] = None,
 ) -> RollbackResult:
     """
     Execute rollback instructions for a plan.
@@ -198,12 +199,17 @@ async def execute_rollback(
         if target_executor is None:
             if control_pool is None:
                 raise RollbackInstructionsError("Live rollback requires the control-plane pool")
-            from backend.services.target_executor import TargetPostgresExecutor
+            from backend.services.configuration_backends import get_configuration_backend
 
-            target_executor = TargetPostgresExecutor(control_pool)
+            target_executor = await get_configuration_backend(control_pool, host_id)
         try:
             execution = await asyncio.wait_for(
-                target_executor.rollback(host_id, pre_change_snapshot),
+                target_executor.rollback(
+                    host_id,
+                    pre_change_snapshot,
+                    backend_snapshot,
+                    plan_id=plan_id,
+                ),
                 timeout=timeout,
             )
             if not execution.succeeded or not execution.rolled_back:

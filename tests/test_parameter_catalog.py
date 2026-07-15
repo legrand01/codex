@@ -223,3 +223,45 @@ async def test_parameter_disposition_api_is_tenant_scoped_and_ordered(client):
     query = db.fetch.await_args.args[0]
     assert "organization_id = $2" in query
     assert "ORDER BY display_order" in query
+
+
+@pytest.mark.asyncio
+async def test_configuration_versions_api_decodes_json_and_redacts_file_bytes(client):
+    run_id = uuid4()
+    now = datetime.now(timezone.utc)
+    db = AsyncMock()
+    db.fetchval.return_value = True
+    db.fetch.return_value = [
+        {
+            "id": uuid4(),
+            "host_id": uuid4(),
+            "plan_id": uuid4(),
+            "configuration_backend": "managed_conf_file",
+            "status": "rolled_back",
+            "managed_conf_path": "/var/lib/postgresql/data/conf.d/postgres_tune.conf",
+            "parameters": '[{"setting_name":"work_mem"}]',
+            "backend_snapshot": '{"file":{"checksum":"abc"}}',
+            "apply_result": '{"verified_values":{"work_mem":"128kB"}}',
+            "rollback_result": '{"verified_values":{"work_mem":"64kB"}}',
+            "error": None,
+            "created_at": now,
+            "applied_at": now,
+            "rolled_back_at": now,
+        }
+    ]
+
+    async def dependency():
+        yield db
+
+    app.dependency_overrides[get_db] = dependency
+    try:
+        response = await client.get(f"/api/v1/runs/{run_id}/configuration-versions")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()[0]["parameters"][0]["setting_name"] == "work_mem"
+    assert response.json()[0]["backend_snapshot"]["file"] == {"checksum": "abc"}
+    query = db.fetch.await_args.args[0]
+    assert "#- '{file,bytes_b64}'" in query
+    assert "v.organization_id = $2" in query

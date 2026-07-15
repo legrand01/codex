@@ -66,6 +66,7 @@ class ReportResponse(BaseModel):
     applied_changes: List[dict]
     verification_results: List[dict]
     parameter_dispositions: List[dict]
+    configuration_versions: List[dict]
     generated_at: datetime
     expires_at: Optional[datetime] = None
 
@@ -213,7 +214,13 @@ async def get_report(
             row = await conn.fetchrow(
                 """
                 SELECT d.id, d.run_id, d.goal, d.host_id, d.outcome_status,
-                       d.report_content, d.generated_at, d.expires_at
+                       d.report_content, d.generated_at, d.expires_at,
+                       (
+                           SELECT MAX(v.updated_at)
+                           FROM configuration_versions v
+                           JOIN plans p ON p.id = v.plan_id
+                           WHERE p.run_id = d.run_id
+                       ) AS configuration_updated_at
                 FROM dba_reports d
                 JOIN loop_runs r ON r.id = d.run_id
                 WHERE d.run_id = $1 AND r.organization_id = $2
@@ -222,7 +229,11 @@ async def get_report(
                 principal.organization_id,
             )
 
-        if row is not None:
+        report_is_current = row is not None and (
+            row.get("configuration_updated_at") is None
+            or row["generated_at"] >= row["configuration_updated_at"]
+        )
+        if report_is_current:
             # Parse report_content from JSONB
             report_content = row["report_content"]
             if isinstance(report_content, str):
@@ -241,6 +252,9 @@ async def get_report(
                 verification_results=report_content.get("verification_results", []),
                 parameter_dispositions=report_content.get(
                     "parameter_dispositions", []
+                ),
+                configuration_versions=report_content.get(
+                    "configuration_versions", []
                 ),
                 generated_at=row["generated_at"],
                 expires_at=row["expires_at"],
@@ -273,6 +287,7 @@ async def get_report(
                 applied_changes=report.applied_changes,
                 verification_results=report.verification_results,
                 parameter_dispositions=report.parameter_dispositions,
+                configuration_versions=report.configuration_versions,
                 generated_at=report.generated_at,
                 expires_at=None,
             )

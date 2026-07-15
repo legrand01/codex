@@ -89,6 +89,8 @@ class AgentConfig:
     restart_capability: bool = False
     provider_api_capability: bool = False
     managed_file_access: bool = False
+    managed_conf_path: str = ""
+    command_poll_interval: int = 2
 
     @classmethod
     def from_env(cls) -> "AgentConfig":
@@ -111,6 +113,8 @@ class AgentConfig:
             restart_capability=_env_bool("RESTART_CAPABILITY", False),
             provider_api_capability=_env_bool("PROVIDER_API_CAPABILITY", False),
             managed_file_access=_env_bool("MANAGED_FILE_ACCESS", False),
+            managed_conf_path=_env_str("MANAGED_CONF_PATH", ""),
+            command_poll_interval=_env_int("COMMAND_POLL_INTERVAL", 2),
         )
         config.validate()
         return config
@@ -172,3 +176,12 @@ class AgentConfig:
             raise ConfigValidationError(
                 f"buffer_max_bytes must be >= 1, got {self.buffer_max_bytes}"
             )
+        if self.managed_file_access:
+            if not self.managed_conf_path:
+                raise ConfigValidationError(
+                    "managed_conf_path is required when managed_file_access is enabled"
+                )
+            if not os.path.isabs(self.managed_conf_path):
+                raise ConfigValidationError("managed_conf_path must be absolute")
+            if self.command_poll_interval < 1:
+                raise ConfigValidationError("command_poll_interval must be at least 1 second")

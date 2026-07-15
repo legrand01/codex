@@ -11,11 +11,11 @@ from backend.models.enums import PlanStatus, WorkflowStep
 from backend.services.audit_logger import AuditLogger, get_audit_logger
 from backend.services.baseline_measurement import capture_baseline
 from backend.services.candidate_optimizer import CandidateOptimizer, evaluate_candidate
+from backend.services.configuration_backends import get_configuration_backend
 from backend.services.loop_worker import DBALoopWorker
 from backend.services.parameter_catalog import refresh_parameter_dispositions
 from backend.services.plan_execution import PlanExecutionService
 from backend.services.report_generator import ReportGenerator
-from backend.services.target_executor import TargetPostgresExecutor
 from backend.services.verification import METRIC_CATEGORIES, verify_and_decide
 
 
@@ -180,7 +180,7 @@ class DurableRunOrchestrator:
 
         proposed_changes = _json(plan["proposed_changes"], [])
         pre_snapshot = _json(plan["pre_change_snapshot"], {})
-        executor = TargetPostgresExecutor(self.pool)
+        executor = await get_configuration_backend(self.pool, host_id)
 
         if status in {PlanStatus.APPROVED.value, PlanStatus.DRY_RUN_PASSED.value}:
             if await self._cancelled(run_id):
@@ -209,7 +209,6 @@ class DurableRunOrchestrator:
             await PlanExecutionService(
                 self.pool,
                 audit_logger=self.audit_logger,
-                target_executor=executor,
             ).execute(plan["id"])
             plan = await self._load_latest_plan(run_id)
             status = plan["status"]
@@ -229,11 +228,16 @@ class DurableRunOrchestrator:
                     result_reason="Applied target state requires verification",
                 )
             await self._set_run(run_id, "running", WorkflowStep.VERIFY)
+            apply_result = _json(plan.get("apply_result"), {})
+            pending_restart = set(apply_result.get("pending_restart") or [])
             expected = {
                 change["setting_name"]: change["proposed_value"]
                 for change in proposed_changes
+                if change["setting_name"] not in pending_restart
             }
-            verified_values = await executor.verify_expected_values(host_id, expected)
+            verified_values = (
+                await executor.verify_expected_values(host_id, expected) if expected else {}
+            )
             await self.audit_logger.log(
                 run_id=run_id,
                 actor_type="system",
@@ -241,7 +245,12 @@ class DurableRunOrchestrator:
                 action_type="target_configuration_verified",
                 target_host_id=host_id,
                 result="success",
-                details={"plan_id": str(plan["id"]), "verified_values": verified_values},
+                details={
+                    "plan_id": str(plan["id"]),
+                    "verified_values": verified_values,
+                    "pending_restart": sorted(pending_restart),
+                    "configuration_active": not pending_restart,
+                },
             )
 
             if candidate:
@@ -275,7 +284,17 @@ class DurableRunOrchestrator:
                     )
                 await self._set_run(run_id, "running", WorkflowStep.KEEP_ROLLBACK)
                 if decision.decision != "kept":
-                    await executor.rollback(host_id, pre_snapshot)
+                    backend_snapshot = dict(apply_result.get("backend_snapshot") or {})
+                    if apply_result.get("configuration_version_id"):
+                        backend_snapshot["configuration_version_id"] = apply_result[
+                            "configuration_version_id"
+                        ]
+                    await executor.rollback(
+                        host_id,
+                        pre_snapshot,
+                        backend_snapshot,
+                        plan_id=plan["id"],
+                    )
                     await self._set_plan_status(plan["id"], PlanStatus.ROLLED_BACK)
                 await optimizer.persist_decision(candidate, decision)
                 return await self._continue_candidate_search(run, config)

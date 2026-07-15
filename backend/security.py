@@ -16,7 +16,8 @@ from backend.dependencies import get_db
 
 DEFAULT_ORGANIZATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 AGENT_PATH = re.compile(
-    r"^/api/v1/fleet/[0-9a-fA-F-]+/(heartbeat|role|evidence|capabilities)$"
+    r"^/api/v1/fleet/[0-9a-fA-F-]+/"
+    r"(heartbeat|role|evidence|capabilities|commands(?:/[0-9a-fA-F-]+/result)?)$"
 )
 PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
 
@@ -123,7 +124,9 @@ async def authenticate_websocket(websocket: WebSocket) -> Optional[Principal]:
 def is_public_or_agent_path(request: Request) -> bool:
     if request.url.path in PUBLIC_PATHS:
         return True
-    return request.method == "POST" and bool(AGENT_PATH.fullmatch(request.url.path))
+    return request.method in {"GET", "POST"} and bool(
+        AGENT_PATH.fullmatch(request.url.path)
+    )
 
 
 async def current_principal(request: Request) -> Principal:

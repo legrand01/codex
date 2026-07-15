@@ -1,7 +1,9 @@
 # P0 production release runbook
 
-P0 permits only online PostgreSQL setting changes that pass a live transaction
-dry-run. Arbitrary SQL, index DDL, replicas, restart-only parameters, stale
+P0 permits only allowlisted PostgreSQL settings that pass backend-specific live
+preflight and snapshot validation. Reload-context settings may become active
+after verified `pg_reload_conf()`; restart-context settings remain explicitly
+pending until an authorized restart. Arbitrary SQL, index DDL, replicas, stale
 snapshots, missing verification evidence, and unverified rollback state fail
 closed.
 
@@ -62,6 +64,19 @@ heartbeat. Keep `RESTART_CAPABILITY`, `PROVIDER_API_CAPABILITY`, and
 `MANAGED_FILE_ACCESS` false unless that capability has been explicitly installed,
 tested, and enrolled for the target; connectivity alone never enables them.
 
+For an enrolled self-managed host, set an absolute `MANAGED_CONF_PATH` ending
+in `conf.d/postgres_tune.conf`. Provision `postgresql.conf` with a deterministic
+late `include_dir = 'conf.d'`, and give the Host Agent access to that directory.
+The agent verifies include ordering, same-filesystem atomic replacement,
+ownership, mode, free space, `pg_file_settings`, and reload permission before
+advertising the capability. It rejects command-line, `postgresql.auto.conf`,
+later-include, database/user, or provider-owned conflicts. Do not grant the
+control-plane process direct access to the target filesystem.
+
+Managed cloud hosts must select `configuration_backend=provider` and have an
+explicit adapter for their platform. Missing adapters fail closed; never enable
+`MANAGED_FILE_ACCESS` to simulate a provider parameter group.
+
 ## 3. Release with writes disabled
 
 Start the API, worker, frontend, Redis, and control-plane PostgreSQL. Verify:
@@ -98,6 +113,9 @@ retries an untouched operation, or rolls back a partial state.
 
 - Use the rollback API for an applied plan; rollback restores the captured
   pre-change provenance and verifies the result on the target.
+- Managed-file rollback restores the exact prior bytes, owner, mode, or prior
+  absence, then reloads and verifies value plus sourcefile. Exact bytes remain
+  private recovery data and must not appear in APIs, reports, logs, or events.
 - If verification evidence is absent, stale, or degraded beyond the configured
   threshold, the orchestrator rolls back automatically.
 - Preserve `audit_log`, `write_operations`, `run_jobs`, the run report, and agent

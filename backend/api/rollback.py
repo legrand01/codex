@@ -68,7 +68,7 @@ async def _get_plan(plan_id: UUID, organization_id: Optional[UUID] = None) -> Op
         row = await conn.fetchrow(
             """
             SELECT id, run_id, host_id, status, rollback_instructions,
-                   pre_change_snapshot, applied_at, rolled_back_at
+                   pre_change_snapshot, apply_result, applied_at, rolled_back_at
             FROM plans
             WHERE id = $1
               AND ($2::uuid IS NULL OR organization_id = $2)
@@ -182,6 +182,9 @@ async def initiate_rollback(
             host_id=host_id,
             pre_change_snapshot=plan.get("pre_change_snapshot"),
             control_pool=pool,
+            backend_snapshot=(plan.get("apply_result") or {}).get("backend_snapshot")
+            if isinstance(plan.get("apply_result"), dict)
+            else None,
         )
 
         # Success: update plan status to "rolled_back" (Req 5.6)
