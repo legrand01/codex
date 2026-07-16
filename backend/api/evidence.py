@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.dependencies import get_db
@@ -54,6 +54,21 @@ class EvidenceSnapshotResponse(BaseModel):
     data: dict
     quality_score: Optional[float] = None
     freshness_age: str
+    data_size_bytes: int = 0
+    data_truncated: bool = False
+
+
+class EvidenceSnapshotSummaryResponse(BaseModel):
+    """Bounded evidence metadata returned by the run listing endpoint."""
+
+    id: UUID
+    run_id: UUID
+    host_id: UUID
+    evidence_type: str
+    collected_at: datetime
+    quality_score: Optional[float] = None
+    freshness_age: str
+    data_size_bytes: int = 0
 
 
 class CategorySummary(BaseModel):
@@ -67,19 +82,24 @@ class EvidenceListResponse(BaseModel):
     """Response model for evidence listing by run."""
 
     run_id: UUID
-    snapshots: List[EvidenceSnapshotResponse]
+    snapshots: List[EvidenceSnapshotSummaryResponse]
     categories: List[CategorySummary]
     total: int
+    limit: int
+    offset: int
 
 
 class EvidenceEmptyResponse(BaseModel):
     """Response model for empty evidence state."""
 
     run_id: UUID
-    snapshots: List[EvidenceSnapshotResponse] = Field(default_factory=list)
+    snapshots: List[EvidenceSnapshotSummaryResponse] = Field(default_factory=list)
     categories: List[CategorySummary] = Field(default_factory=list)
     total: int = 0
     message: str = "No evidence has been collected yet for the selected run"
+
+
+MAX_INLINE_EVIDENCE_BYTES = 256_000
 
 
 # --- Utility Functions ---
@@ -140,6 +160,47 @@ def _parse_json_field(value) -> dict:
     return {}
 
 
+def _bounded_value(value, *, depth: int = 0):
+    """Build a small, useful preview without returning an unbounded payload."""
+    if depth >= 3:
+        if isinstance(value, (list, dict)):
+            return f"<{type(value).__name__} omitted>"
+        return str(value)[:500]
+    if isinstance(value, str):
+        return value if len(value) <= 500 else f"{value[:500]}..."
+    if isinstance(value, list):
+        return {
+            "kind": "array",
+            "count": len(value),
+            "sample": [_bounded_value(item, depth=depth + 1) for item in value[:3]],
+        }
+    if isinstance(value, dict):
+        items = list(value.items())
+        return {
+            "kind": "object",
+            "count": len(items),
+            "sample": {
+                str(key): _bounded_value(item, depth=depth + 1)
+                for key, item in items[:10]
+            },
+        }
+    return value
+
+
+def _bounded_snapshot_data(data: dict, data_size_bytes: int) -> tuple[dict, bool]:
+    """Return full small snapshots and a deterministic preview for large ones."""
+    if data_size_bytes <= MAX_INLINE_EVIDENCE_BYTES:
+        return data, False
+    return (
+        {
+            "_payload_truncated": True,
+            "_payload_size_bytes": data_size_bytes,
+            "_preview": _bounded_value(data),
+        },
+        True,
+    )
+
+
 # --- Endpoints ---
 
 
@@ -159,7 +220,7 @@ async def get_evidence_snapshot(
     """
     row = await db.fetchrow(
         "SELECT e.id, e.run_id, e.host_id, e.evidence_type, e.collected_at, e.data, "
-        "e.quality_score "
+        "e.quality_score, octet_length(e.data::text) AS data_size_bytes "
         "FROM evidence_snapshots e JOIN hosts h ON h.id = e.host_id "
         "WHERE e.id = $1 AND h.organization_id = $2",
         snapshot_id,
@@ -172,84 +233,114 @@ async def get_evidence_snapshot(
             detail=f"Evidence snapshot '{snapshot_id}' not found or unavailable",
         )
 
+    data_size_bytes = int(row.get("data_size_bytes") or 0)
+    data, truncated = _bounded_snapshot_data(_parse_json_field(row["data"]), data_size_bytes)
     return EvidenceSnapshotResponse(
         id=row["id"],
         run_id=row["run_id"],
         host_id=row["host_id"],
         evidence_type=row["evidence_type"],
         collected_at=row["collected_at"],
-        data=_parse_json_field(row["data"]),
+        data=data,
         quality_score=float(row["quality_score"]) if row["quality_score"] is not None else None,
         freshness_age=format_freshness_age(row["collected_at"]),
+        data_size_bytes=data_size_bytes,
+        data_truncated=truncated,
     )
 
 
 @router.get("/{run_id}", response_model=EvidenceListResponse)
 async def list_evidence_by_run(
     run_id: UUID,
+    evidence_type: Optional[str] = Query(default=None, min_length=1, max_length=100),
+    limit: int = Query(default=100, ge=1, le=250),
+    offset: int = Query(default=0, ge=0),
     db=Depends(get_db),
     principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
 ) -> EvidenceListResponse:
     """
-    List all evidence snapshots collected during a loop run.
+    List bounded evidence metadata collected during a loop run.
+
+    Snapshot payloads are intentionally excluded so an active run cannot turn
+    this listing into a multi-hundred-megabyte response. Full (or safely
+    previewed) data is available from the single-snapshot endpoint.
 
     Returns evidence grouped by category with counts per category.
     Returns empty-state response when no evidence exists for the run.
 
     Requirements: 3.1, 3.2, 3.5
     """
-    rows = await db.fetch(
-        "SELECT e.id, e.run_id, e.host_id, e.evidence_type, e.collected_at, e.data, "
-        "e.quality_score "
+    category_rows = await db.fetch(
+        "SELECT e.evidence_type, COUNT(*)::integer AS count "
         "FROM evidence_snapshots e JOIN loop_runs r ON r.id = e.run_id "
         "WHERE e.run_id = $1 AND r.organization_id = $2 "
-        "ORDER BY collected_at ASC",
+        "AND ($3::text IS NULL OR e.evidence_type = $3) "
+        "GROUP BY e.evidence_type",
         run_id,
         principal.organization_id,
+        evidence_type,
     )
 
-    if not rows:
+    total = sum(int(row["count"]) for row in category_rows)
+
+    if total == 0:
         return EvidenceListResponse(
             run_id=run_id,
             snapshots=[],
             categories=[],
             total=0,
+            limit=limit,
+            offset=offset,
         )
+
+    rows = await db.fetch(
+        "SELECT e.id, e.run_id, e.host_id, e.evidence_type, e.collected_at, "
+        "e.quality_score, octet_length(e.data::text) AS data_size_bytes "
+        "FROM evidence_snapshots e JOIN loop_runs r ON r.id = e.run_id "
+        "WHERE e.run_id = $1 AND r.organization_id = $2 "
+        "AND ($3::text IS NULL OR e.evidence_type = $3) "
+        "ORDER BY e.collected_at DESC, e.id DESC LIMIT $4 OFFSET $5",
+        run_id,
+        principal.organization_id,
+        evidence_type,
+        limit,
+        offset,
+    )
 
     # Build snapshot list with freshness age
     snapshots = []
-    category_counts: Dict[str, int] = {}
-
     for row in rows:
         freshness = format_freshness_age(row["collected_at"])
-        category = categorize_evidence_type(row["evidence_type"])
-
-        # Count by category
-        category_counts[category] = category_counts.get(category, 0) + 1
 
         snapshots.append(
-            EvidenceSnapshotResponse(
+            EvidenceSnapshotSummaryResponse(
                 id=row["id"],
                 run_id=row["run_id"],
                 host_id=row["host_id"],
                 evidence_type=row["evidence_type"],
                 collected_at=row["collected_at"],
-                data=_parse_json_field(row["data"]),
                 quality_score=(
                     float(row["quality_score"]) if row["quality_score"] is not None else None
                 ),
                 freshness_age=freshness,
+                data_size_bytes=int(row.get("data_size_bytes") or 0),
             )
         )
 
-    # Build category summaries
+    category_counts: Dict[str, int] = {}
+    for row in category_rows:
+        category = categorize_evidence_type(row["evidence_type"])
+        category_counts[category] = category_counts.get(category, 0) + int(row["count"])
     categories = [
-        CategorySummary(category=cat, count=cnt) for cat, cnt in sorted(category_counts.items())
+        CategorySummary(category=cat, count=count)
+        for cat, count in sorted(category_counts.items())
     ]
 
     return EvidenceListResponse(
         run_id=run_id,
         snapshots=snapshots,
         categories=categories,
-        total=len(snapshots),
+        total=total,
+        limit=limit,
+        offset=offset,
     )

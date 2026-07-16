@@ -185,8 +185,7 @@ async def build_tuning_preflight(
         "Single active Host Agent",
         not bool(row.get("agent_write_ambiguous", False)),
         True,
-        "Multiple active Host Agents share this identity; writes remain blocked "
-        "until one lease expires.",
+        "A single unambiguous Host Agent lease is required for target writes.",
     )
 
     backend = row["configuration_backend"]

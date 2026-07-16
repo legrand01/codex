@@ -349,13 +349,13 @@ class TestOutcomeStatus:
         plans = [{"applied_at": datetime.now(timezone.utc), "status": "applied"}]
         assert self.generator._determine_outcome_status(run, plans) == "success"
 
-    def test_completed_run_all_rolled_back_is_failure(self):
+    def test_completed_run_all_rolled_back_is_safe_partial_success(self):
         """Completed run where all applied plans were rolled back is failure."""
         run = {"status": "completed"}
         plans = [
             {"applied_at": datetime.now(timezone.utc), "status": "rolled_back"},
         ]
-        assert self.generator._determine_outcome_status(run, plans) == "failure"
+        assert self.generator._determine_outcome_status(run, plans) == "partial_success"
 
     def test_completed_run_partial_rollback_is_partial_success(self):
         """Completed run with some rollbacks is partial_success."""

@@ -555,3 +555,51 @@ async def test_receive_capability_report_upserts_agent_snapshot():
         assert data["details"] == {"source": "agent-probe"}
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_update_execution_policy_returns_current_agent_lease_state():
+    """Execution-policy writes must not hide an ambiguous or active agent lease."""
+    host_id = uuid.uuid4()
+    lease_expires_at = datetime.now(timezone.utc) + timedelta(seconds=60)
+    updated = {
+        "id": host_id,
+        "hostname": "db-primary-1",
+        "database_name": "appdb",
+        "health_status": "healthy",
+        "connection_status": "connected",
+        "pg_version": "16.1",
+        "server_role": "primary",
+        "last_heartbeat": datetime.now(timezone.utc),
+        "agent_write_ambiguous": True,
+        "agent_lease_expires_at": lease_expires_at,
+    }
+
+    class PolicyConnection(MockConnection):
+        async def fetchrow(self, query, *args):
+            if "UPDATE hosts" in query:
+                return updated
+            return await super().fetchrow(query, *args)
+
+    mock_conn = PolicyConnection()
+    dep, override = _override_db(mock_conn)
+    app.dependency_overrides[dep] = override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.put(
+                f"/api/v1/fleet/{host_id}/execution-policy",
+                json={
+                    "environment": "staging",
+                    "target_dsn_env": "TARGET_DSN",
+                    "writes_enabled": False,
+                },
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["agent_write_ambiguous"] is True
+        assert data["agent_lease_expires_at"] == lease_expires_at.isoformat().replace(
+            "+00:00", "Z"
+        )
+    finally:
+        app.dependency_overrides.clear()

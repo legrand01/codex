@@ -729,7 +729,7 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     - Test event filters and deep links
     - _Requirements: 20.2, 20.5, 20.6, 20.7_
 
-- [ ] 26. Productized tuning checkpoint
+- [x] 26. Productized tuning checkpoint
   - Run unit, property, integration, real-target, frontend, and browser workflow tests
   - Verify the DBTune-baseline flow from Start tuning through persistent final report
   - Verify both AlterSystemBackend and ManagedConfFileBackend apply/rollback paths

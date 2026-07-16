@@ -966,7 +966,8 @@ async def update_execution_policy(
             updated_at = NOW()
         WHERE id = $1 AND organization_id = $2
         RETURNING id, hostname, health_status, connection_status,
-                  pg_version, server_role, database_name, last_heartbeat
+                  pg_version, server_role, database_name, last_heartbeat,
+                  agent_write_ambiguous, agent_lease_expires_at
         """,
         host_id,
         principal.organization_id,
@@ -991,4 +992,6 @@ async def update_execution_policy(
         pg_version=row["pg_version"],
         server_role=row["server_role"],
         last_heartbeat=row["last_heartbeat"],
+        agent_write_ambiguous=bool(row["agent_write_ambiguous"]),
+        agent_lease_expires_at=row["agent_lease_expires_at"],
     )

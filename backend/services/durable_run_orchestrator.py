@@ -301,15 +301,54 @@ class DurableRunOrchestrator:
                 await self._set_run(run_id, "running", WorkflowStep.KEEP_ROLLBACK)
                 if decision.decision != "kept":
                     backend_snapshot = dict(apply_result.get("backend_snapshot") or {})
-                    if apply_result.get("configuration_version_id"):
-                        backend_snapshot["configuration_version_id"] = apply_result[
-                            "configuration_version_id"
-                        ]
-                    await executor.rollback(
-                        host_id,
-                        pre_snapshot,
-                        backend_snapshot,
-                        plan_id=plan["id"],
+                    version_value = apply_result.get("configuration_version_id")
+                    configuration_version_id = (
+                        UUID(str(version_value)) if version_value else None
+                    )
+                    if configuration_version_id:
+                        backend_snapshot["configuration_version_id"] = str(
+                            configuration_version_id
+                        )
+                    await self.events.record(
+                        "CONFIG_ROLLBACK_STARTED",
+                        "Candidate did not beat the verified baseline; rollback started",
+                        host_id=host_id,
+                        run_id=run_id,
+                        configuration_version_id=configuration_version_id,
+                        details={
+                            "plan_id": str(plan["id"]),
+                            "candidate_id": str(candidate["id"]),
+                            "decision": decision.decision,
+                            "reason": decision.reason,
+                        },
+                    )
+                    try:
+                        rollback_result = await executor.rollback(
+                            host_id,
+                            pre_snapshot,
+                            backend_snapshot,
+                            plan_id=plan["id"],
+                        )
+                    except Exception as exc:
+                        await self.events.record(
+                            "CONFIG_ROLLBACK_FAILED",
+                            "Candidate configuration rollback failed",
+                            host_id=host_id,
+                            run_id=run_id,
+                            configuration_version_id=configuration_version_id,
+                            details={"plan_id": str(plan["id"]), "error": str(exc)},
+                        )
+                        raise
+                    await self.events.record(
+                        "CONFIG_ROLLBACK_SUCCEEDED",
+                        "Candidate configuration was rolled back and verified",
+                        host_id=host_id,
+                        run_id=run_id,
+                        configuration_version_id=configuration_version_id,
+                        details={
+                            "plan_id": str(plan["id"]),
+                            "verified_values": rollback_result.verified_values,
+                        },
                     )
                     await self._set_plan_status(plan["id"], PlanStatus.ROLLED_BACK)
                 await optimizer.persist_decision(candidate, decision)

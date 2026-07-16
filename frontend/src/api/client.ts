@@ -19,6 +19,7 @@ import type {
   ParameterDisposition,
   ConfigurationVersion,
   EvidenceSnapshot,
+  EvidenceSnapshotSummary,
   EvidenceListResponse,
   PlanDetail,
   PlanListResponse,
@@ -252,14 +253,26 @@ export const eventsApi = {
 
 // Evidence API
 export const evidenceApi = {
-  async listEvidence(runId: string): Promise<EvidenceSnapshot[]> {
-    const response = await request<EvidenceListResponse | EvidenceSnapshot[]>(
-      `/evidence/${runId}`,
-    );
-    return Array.isArray(response) ? response : response.snapshots ?? [];
+  listEvidencePage(
+    runId: string,
+    options: { evidenceType?: string; limit?: number; offset?: number } = {},
+  ): Promise<EvidenceListResponse> {
+    const params = new URLSearchParams();
+    if (options.evidenceType) params.set('evidence_type', options.evidenceType);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    if (options.offset !== undefined) params.set('offset', String(options.offset));
+    const suffix = params.toString();
+    return request<EvidenceListResponse>(`/evidence/${runId}${suffix ? `?${suffix}` : ''}`);
+  },
+  async listEvidence(runId: string): Promise<EvidenceSnapshotSummary[]> {
+    return (await this.listEvidencePage(runId)).snapshots;
   },
   getSnapshot(snapshotId: string): Promise<EvidenceSnapshot> {
     return request<EvidenceSnapshot>(`/evidence/snapshot/${snapshotId}`);
+  },
+  async getLatestSnapshot(runId: string, evidenceType: string): Promise<EvidenceSnapshot | null> {
+    const page = await this.listEvidencePage(runId, { evidenceType, limit: 1 });
+    return page.snapshots.length ? this.getSnapshot(page.snapshots[0].id) : null;
   },
 };
 

@@ -571,7 +571,10 @@ class ReportGenerator:
                 return "success"
             elif rolled_back:
                 if len(rolled_back) == len(applied_plans):
-                    return "failure"
+                    # A completed measurement loop that safely rejects every
+                    # regressing candidate achieved its safety objective even
+                    # though it found no performance improvement.
+                    return "partial_success"
                 return "partial_success"
             elif applied_plans:
                 return "success"

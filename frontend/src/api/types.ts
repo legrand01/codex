@@ -305,21 +305,29 @@ export interface TuningCandidate {
   created_at: string;
 }
 
-export interface EvidenceSnapshot {
+export interface EvidenceSnapshotSummary {
   id: string;
   run_id: string;
   host_id: string;
   evidence_type: string;
   collected_at: string;
-  data: Record<string, unknown>;
   quality_score: number | null;
+  freshness_age: string;
+  data_size_bytes: number;
+}
+
+export interface EvidenceSnapshot extends EvidenceSnapshotSummary {
+  data: Record<string, unknown>;
+  data_truncated: boolean;
 }
 
 export interface EvidenceListResponse {
   run_id: string;
-  snapshots: EvidenceSnapshot[];
-  categories: Record<string, unknown>[];
+  snapshots: EvidenceSnapshotSummary[];
+  categories: Array<{ category: string; count: number }>;
   total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface EvidenceCategory {

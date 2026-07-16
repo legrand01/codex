@@ -145,6 +145,7 @@ def _make_evidence_record(
     collected_at=None,
     data=None,
     quality_score=None,
+    data_size_bytes=0,
 ):
     """Create a mock evidence_snapshots record."""
     if snapshot_id is None:
@@ -166,6 +167,7 @@ def _make_evidence_record(
         collected_at=collected_at,
         data=data,
         quality_score=quality_score,
+        data_size_bytes=data_size_bytes,
     )
 
 
@@ -179,6 +181,15 @@ class MockConnection:
 
     async def fetch(self, query, *args):
         self.last_fetch_args = args
+        if "COUNT(*)::integer AS count" in query:
+            counts = {}
+            for record in self.records:
+                evidence_type = record["evidence_type"]
+                counts[evidence_type] = counts.get(evidence_type, 0) + 1
+            return [
+                MockRecord(evidence_type=evidence_type, count=count)
+                for evidence_type, count in counts.items()
+            ]
         return self.records
 
     async def fetchrow(self, query, *args):
@@ -279,6 +290,9 @@ async def test_list_evidence_with_snapshots():
             assert data["run_id"] == str(run_id)
             assert data["total"] == 4
             assert len(data["snapshots"]) == 4
+            assert data["limit"] == 100
+            assert data["offset"] == 0
+            assert all("data" not in snapshot for snapshot in data["snapshots"])
 
             # Check categories: configuration=1, performance=2, locks=1
             categories = {c["category"]: c["count"] for c in data["categories"]}
@@ -362,7 +376,34 @@ async def test_get_snapshot_success():
             assert data["evidence_type"] == "locks"
             assert data["data"] == {"blocked_queries": 3, "lock_types": ["RowExclusiveLock"]}
             assert data["quality_score"] == 0.75
+            assert data["data_truncated"] is False
             assert "freshness_age" in data
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_get_snapshot_returns_bounded_preview_for_large_payload():
+    """A single evidence lookup must not serialize an unbounded raw payload."""
+    snapshot_id = uuid.uuid4()
+    record = _make_evidence_record(
+        snapshot_id=snapshot_id,
+        data={"locks": [{"query": "x" * 2_000}] * 1_000},
+        data_size_bytes=2_000_000,
+    )
+    mock_conn = MockConnection(single_record=record)
+    dep, override = _override_db(mock_conn)
+    app.dependency_overrides[dep] = override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(f"/api/v1/evidence/snapshot/{snapshot_id}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["data_truncated"] is True
+            assert data["data_size_bytes"] == 2_000_000
+            assert data["data"]["_payload_truncated"] is True
+            assert len(response.content) < 100_000
     finally:
         app.dependency_overrides.clear()
 

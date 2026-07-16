@@ -21,7 +21,9 @@ import type {
   ConfigurationVersion,
   ConfigurationCompare,
   DBAReport,
+  EvidenceListResponse,
   EvidenceSnapshot,
+  EvidenceSnapshotSummary,
   PlanDetail,
   OperationalEvent,
   ParameterDisposition,
@@ -99,7 +101,10 @@ interface SessionData {
   parameterDispositions: ParameterDisposition[];
   configurationVersions: ConfigurationVersion[];
   plans: PlanDetail[];
-  evidence: EvidenceSnapshot[];
+  evidence: EvidenceSnapshotSummary[];
+  evidenceCategories: Array<{ category: string; count: number }>;
+  evidenceTotal: number;
+  workloadSnapshot: EvidenceSnapshot | null;
   activity: AuditEntry[];
   operationalEvents: OperationalEvent[];
   report: DBAReport | null;
@@ -111,13 +116,13 @@ interface SessionData {
 }
 
 function OverviewTab({ data }: { data: SessionData }) {
-  const { run, baseline, advisories, candidates, plans, evidence, activity, report } = data;
+  const { run, baseline, advisories, candidates, plans, activity, report } = data;
   const stats = [
     ['Current step', run.current_step?.replace(/_/g, ' ') ?? 'Finished'],
     ['Iteration', `${run.current_iteration} of ${run.max_iterations}`],
     ['Duration', formatDuration(run.elapsed_seconds)],
     ['Plans', String(plans.length)],
-    ['Evidence', String(evidence.length)],
+    ['Evidence', String(data.evidenceTotal)],
     ['Activity', String(activity.length)],
   ];
   return <div style={{ display: 'grid', gap: '14px' }}>
@@ -356,9 +361,7 @@ function SelectedFingerprint({ fingerprintId }: { fingerprintId: string }) {
 }
 
 function WorkloadTab({ data }: { data: SessionData }) {
-  const statementSnapshots = data.evidence.filter((item) => ['pg_stat_statements', 'pg_stats'].includes(item.evidence_type));
-  const latest = statementSnapshots[statementSnapshots.length - 1];
-  const statements = snapshotRecords(latest, ['statements', 'statement_stats', 'queries']);
+  const statements = snapshotRecords(data.workloadSnapshot ?? undefined, ['statements', 'statement_stats', 'queries']);
   const sorted = [...statements].sort((left, right) => Number(right.total_exec_time ?? 0) - Number(left.total_exec_time ?? 0));
   const totalTime = sorted.reduce((sum, statement) => sum + Number(statement.total_exec_time ?? 0), 0);
   const fingerprint = data.run.workload_fingerprint_id
@@ -388,9 +391,39 @@ function WorkloadTab({ data }: { data: SessionData }) {
   </div>;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function EvidenceSnapshotCard({ snapshot }: { snapshot: EvidenceSnapshotSummary }) {
+  const [details, setDetails] = useState<EvidenceSnapshot | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loadDetails = async () => {
+    if (details) { setDetails(null); return; }
+    setLoading(true); setError(null);
+    try { setDetails(await evidenceApi.getSnapshot(snapshot.id)); }
+    catch (loadError) { setError(loadError instanceof Error ? loadError.message : String(loadError)); }
+    finally { setLoading(false); }
+  };
+  return <div key={snapshot.id} id={`evidence-${snapshot.id}`} style={card}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
+      <div><strong>{new Date(snapshot.collected_at).toLocaleString()}</strong><div style={subtle}>Quality {snapshot.quality_score === null ? 'not scored' : `${Math.round(snapshot.quality_score * 100)}%`} · {snapshot.id.slice(0, 8)} · {formatBytes(snapshot.data_size_bytes)}</div></div>
+      <button onClick={loadDetails} disabled={loading}>{loading ? 'Loading…' : details ? 'Hide preview' : 'Preview snapshot'}</button>
+    </div>
+    {error && <div style={{ color: '#b91c1c', marginTop: '8px' }}>{error}</div>}
+    {details && <div style={{ marginTop: '10px' }}>
+      {details.data_truncated && <div style={{ color: '#92400e', marginBottom: '6px' }}>Large payload: showing a bounded preview of {formatBytes(details.data_size_bytes)}.</div>}
+      <pre style={{ whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: '360px', fontSize: '0.72rem', background: '#f9fafb', padding: '10px' }}>{JSON.stringify(details.data, null, 2)}</pre>
+    </div>}
+  </div>;
+}
+
 function EvidenceTab({ data }: { data: SessionData }) {
   const grouped = useMemo(() => {
-    const result = new Map<string, EvidenceSnapshot[]>();
+    const result = new Map<string, EvidenceSnapshotSummary[]>();
     for (const snapshot of data.evidence) {
       const values = result.get(snapshot.evidence_type) ?? [];
       values.push(snapshot);
@@ -399,16 +432,13 @@ function EvidenceTab({ data }: { data: SessionData }) {
     return Array.from(result.entries());
   }, [data.evidence]);
   if (!grouped.length) return <EmptyState title="No evidence yet" description="Baseline snapshots will remain attached to this session." />;
-  return <div style={{ display: 'grid', gap: '14px' }}>{grouped.map(([type, snapshots]) => <section key={type}>
-    <h3 style={{ margin: '0 0 7px', textTransform: 'capitalize' }}>{type.replace(/_/g, ' ')} <span style={subtle}>({snapshots.length})</span></h3>
-    <div style={{ display: 'grid', gap: '6px' }}>{[...snapshots].reverse().map((snapshot) => {
-      const payload = JSON.stringify(snapshot.data, null, 2);
-      return <details key={snapshot.id} id={`evidence-${snapshot.id}`} style={card}>
-        <summary style={{ cursor: 'pointer' }}><strong>{new Date(snapshot.collected_at).toLocaleString()}</strong> <span style={subtle}>· Quality {snapshot.quality_score === null ? 'not scored' : `${Math.round(snapshot.quality_score * 100)}%`} · {snapshot.id.slice(0, 8)}</span></summary>
-        <pre style={{ whiteSpace: 'pre-wrap', overflow: 'auto', maxHeight: '360px', fontSize: '0.72rem', background: '#f9fafb', padding: '10px' }}>{payload.length > 8000 ? `${payload.slice(0, 8000)}\n… payload truncated in UI` : payload}</pre>
-      </details>;
-    })}</div>
-  </section>)}</div>;
+  return <div style={{ display: 'grid', gap: '14px' }}>
+    <div style={{ ...card, display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}><div><strong>{data.evidenceTotal.toLocaleString()} retained snapshots</strong><div style={subtle}>Showing the newest {data.evidence.length}; payloads load only when requested.</div></div><div style={{ ...subtle, textAlign: 'right' }}>{data.evidenceCategories.map((item) => `${item.category}: ${item.count.toLocaleString()}`).join(' · ')}</div></div>
+    {grouped.map(([type, snapshots]) => <section key={type}>
+      <h3 style={{ margin: '0 0 7px', textTransform: 'capitalize' }}>{type.replace(/_/g, ' ')} <span style={subtle}>({snapshots.length} recent)</span></h3>
+      <div style={{ display: 'grid', gap: '6px' }}>{snapshots.map((snapshot) => <EvidenceSnapshotCard key={snapshot.id} snapshot={snapshot} />)}</div>
+    </section>)}
+  </div>;
 }
 
 function ActivityTab({ data }: { data: SessionData }) {
@@ -450,7 +480,11 @@ function SessionWorkspace() {
   const tab: Tab = requestedTab && validTabs.has(requestedTab) ? requestedTab : 'overview';
   const runRequest = useApi<RunDetail>(() => runsApi.getRunStatus(runId), [runId]);
   const plansRequest = useApi<PlanDetail[]>(() => plansApi.listRunPlans(runId), [runId]);
-  const evidenceRequest = useApi<EvidenceSnapshot[]>(() => evidenceApi.listEvidence(runId), [runId]);
+  const evidenceRequest = useApi<EvidenceListResponse>(() => evidenceApi.listEvidencePage(runId), [runId]);
+  const workloadEvidenceRequest = useApi<EvidenceSnapshot | null>(
+    () => evidenceApi.getLatestSnapshot(runId, 'pg_stat_statements'),
+    [runId],
+  );
   const activityRequest = useApi<AuditEntry[]>(() => auditApi.getAuditLog(runId), [runId]);
   const operationalEventsRequest = useApi<OperationalEvent[]>(() => eventsApi.list({ run_id: runId }), [runId]);
   const reportRequest = useApi<DBAReport>(() => reportsApi.getReport(runId), [runId]);
@@ -477,7 +511,10 @@ function SessionWorkspace() {
     parameterDispositions: parameterDispositionsRequest.data ?? [],
     configurationVersions: configurationVersionsRequest.data ?? [],
     plans: plansRequest.data ?? [],
-    evidence: evidenceRequest.data ?? [],
+    evidence: evidenceRequest.data?.snapshots ?? [],
+    evidenceCategories: evidenceRequest.data?.categories ?? [],
+    evidenceTotal: evidenceRequest.data?.total ?? 0,
+    workloadSnapshot: workloadEvidenceRequest.data,
     activity: activityRequest.data ?? [],
     operationalEvents: operationalEventsRequest.data ?? [],
     report: reportRequest.data,
@@ -487,7 +524,7 @@ function SessionWorkspace() {
     refreshConfigurationVersions: configurationVersionsRequest.refetch,
     refreshRun: runRequest.refetch,
   };
-  const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading || parameterDispositionsRequest.loading || configurationVersionsRequest.loading;
+  const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading || parameterDispositionsRequest.loading || configurationVersionsRequest.loading || (tab === 'workload' && workloadEvidenceRequest.loading);
 
   return <div>
     <Link to="/runs" style={{ color: '#2563eb', fontSize: '0.85rem' }}>← Tuning sessions</Link>
@@ -506,7 +543,7 @@ function SessionWorkspace() {
       </div>
     </header>
     <nav aria-label="Tuning session sections" style={{ display: 'flex', gap: '3px', overflowX: 'auto', borderBottom: '1px solid #d1d5db', marginBottom: '18px' }}>
-      {tabs.map((item) => <button key={item.id} onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined} style={{ padding: '10px 13px', border: 0, borderBottom: tab === item.id ? '3px solid #2563eb' : '3px solid transparent', background: 'transparent', color: tab === item.id ? '#1d4ed8' : '#4b5563', fontWeight: tab === item.id ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap' }}>{item.label}{item.id === 'plans' && data.plans.length ? ` (${data.plans.length})` : ''}{item.id === 'evidence' && data.evidence.length ? ` (${data.evidence.length})` : ''}</button>)}
+      {tabs.map((item) => <button key={item.id} onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined} style={{ padding: '10px 13px', border: 0, borderBottom: tab === item.id ? '3px solid #2563eb' : '3px solid transparent', background: 'transparent', color: tab === item.id ? '#1d4ed8' : '#4b5563', fontWeight: tab === item.id ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap' }}>{item.label}{item.id === 'plans' && data.plans.length ? ` (${data.plans.length})` : ''}{item.id === 'evidence' && data.evidenceTotal ? ` (${data.evidenceTotal.toLocaleString()})` : ''}</button>)}
     </nav>
     {secondaryLoading && tab !== 'overview' ? <LoadingSpinner message={`Loading ${tab}...`} /> : <>
       {tab === 'overview' && <OverviewTab data={data} />}

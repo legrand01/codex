@@ -55,6 +55,36 @@ The proof applies `work_mem=128kB` through the durable agent command channel,
 verifies the managed file as the active source, then removes/restores that file
 byte-for-byte and verifies the original `64kB` source again.
 
+## Productized tuning checkpoint
+
+The final P0 checkpoint was exercised under the ongoing transaction workload
+with both supported self-managed backends:
+
+- managed-file session `e1209512-fb5e-4a71-9a62-cf4d2ff39b0c` applied through
+  `conf.d/postgres_tune.conf`, measured the candidate, rejected the regression,
+  removed the managed file, reloaded PostgreSQL, and verified the original
+  source and value;
+- ALTER SYSTEM session `e806d980-0899-4dbf-86aa-cb629eac666e` applied
+  `work_mem=128kB` through `postgresql.auto.conf` while 14 target sessions were
+  active, treated the changed workload fingerprint and throughput guardrail as
+  inconclusive, reset the override, reloaded PostgreSQL, and verified
+  `work_mem=64kB` from `postgresql.conf`.
+
+Both completed sessions persist their plan, parameter ledger, apply/reload and
+rollback events, evidence references, configuration version, and a
+`partial_success` report. A safe rollback is partial success because the safety
+objective completed even though no performance improvement was retained.
+
+The session Evidence tab lists bounded metadata and loads one capped snapshot
+preview only on request. This keeps a long-running lab history usable: the
+checkpoint run retained more than 50,000 snapshots, while its listing response
+remained paginated and approximately 29 KB instead of serializing hundreds of
+megabytes of raw payloads.
+
+After testing ALTER SYSTEM parity, return the enrolled host to
+`managed_conf_file` and confirm both override files are clean before starting a
+new experiment.
+
 Emergency-reset the managed file to the image baseline without deleting data:
 
 ```bash

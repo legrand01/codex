@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { evidenceApi } from '../api/client';
-import type { EvidenceSnapshot } from '../api/types';
+import type { EvidenceListResponse, EvidenceSnapshotSummary } from '../api/types';
 import { useApi } from '../hooks/useApi';
 import { EmptyState, LoadingSpinner } from '../components';
 
@@ -26,11 +26,11 @@ interface CategoryGroup {
   category: string;
   label: string;
   count: number;
-  snapshots: EvidenceSnapshot[];
+  snapshots: EvidenceSnapshotSummary[];
 }
 
-function groupByCategory(snapshots: EvidenceSnapshot[]): CategoryGroup[] {
-  const groups = new Map<string, EvidenceSnapshot[]>();
+function groupByCategory(snapshots: EvidenceSnapshotSummary[]): CategoryGroup[] {
+  const groups = new Map<string, EvidenceSnapshotSummary[]>();
   for (const s of snapshots) {
     const cat = EVIDENCE_CATEGORIES[s.evidence_type] || s.evidence_type;
     const existing = groups.get(cat) || [];
@@ -52,8 +52,8 @@ export function EvidenceViewer() {
   const [searchRunId, setSearchRunId] = useState('');
   const [freshness, setFreshness] = useState(0);
 
-  const { data: evidence, loading, error } = useApi<EvidenceSnapshot[]>(
-    () => (searchRunId ? evidenceApi.listEvidence(searchRunId) : Promise.resolve([])),
+  const { data: evidencePage, loading, error } = useApi<EvidenceListResponse | null>(
+    () => (searchRunId ? evidenceApi.listEvidencePage(searchRunId) : Promise.resolve(null)),
     [searchRunId],
   );
 
@@ -68,7 +68,8 @@ export function EvidenceViewer() {
   // Force re-render on freshness change (used in formatFreshness calls)
   void freshness;
 
-  const categories = evidence ? groupByCategory(evidence) : [];
+  const evidence = evidencePage?.snapshots ?? [];
+  const categories = groupByCategory(evidence);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,7 +114,7 @@ export function EvidenceViewer() {
       {loading && <LoadingSpinner message="Loading evidence..." />}
       {error && <div style={{ color: '#dc2626', padding: '16px' }}>Error: {error}</div>}
 
-      {!loading && !error && searchRunId && (!evidence || evidence.length === 0) && (
+      {!loading && !error && searchRunId && evidence.length === 0 && (
         <EmptyState
           title="No Evidence Collected"
           description="No evidence has been collected yet for the selected run."
@@ -124,7 +125,7 @@ export function EvidenceViewer() {
         <div>
           {/* Category summary */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '24px' }}>
-            {categories.map((cat) => (
+            {(evidencePage?.categories ?? []).map((cat) => (
               <div
                 key={cat.category}
                 style={{
@@ -136,15 +137,17 @@ export function EvidenceViewer() {
                 }}
               >
                 <div style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>
-                  {cat.label}
+                  {cat.category}
                 </div>
                 <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#3b82f6' }}>
-                  {cat.count}
+                  {cat.count.toLocaleString()}
                 </div>
                 <div style={{ fontSize: '0.7rem', color: '#6b7280' }}>snapshots</div>
               </div>
             ))}
           </div>
+
+          {evidencePage && evidencePage.total > evidence.length && <div style={{ color: '#6b7280', fontSize: '0.8rem', marginBottom: '16px' }}>Showing the newest {evidence.length} of {evidencePage.total.toLocaleString()} snapshots.</div>}
 
           {/* Evidence details by category */}
           {categories.map((cat) => (

@@ -12,6 +12,7 @@ from backend.services.durable_run_orchestrator import (
     DurableRunOrchestrator,
     RunProcessResult,
 )
+from backend.services.target_executor import ExecutionResult
 
 
 def _pool():
@@ -90,7 +91,11 @@ async def test_non_beneficial_candidate_restores_best_before_continuing(decision
     optimizer.persist_decision = AsyncMock()
     executor = MagicMock()
     executor.verify_expected_values = AsyncMock(return_value={"work_mem": "128kB"})
-    executor.rollback = AsyncMock()
+    executor.rollback = AsyncMock(
+        return_value=ExecutionResult(
+            True, ["work_mem"], {"work_mem": "64kB"}, rolled_back=True
+        )
+    )
     decision = CandidateDecision(
         decision_name,
         "Candidate did not produce a safe comparable improvement",
