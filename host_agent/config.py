@@ -70,6 +70,7 @@ class AgentConfig:
     control_plane_url: str = "http://localhost:8000"
     pg_connection_string: str = ""
     agent_token: str = ""
+    agent_instance_id: str = ""
     agent_auth_required: bool = False
 
     # Collection intervals (seconds)
@@ -101,6 +102,7 @@ class AgentConfig:
             control_plane_url=_env_str("CONTROL_PLANE_URL", "http://localhost:8000"),
             pg_connection_string=_env_str("PG_CONNECTION_STRING", ""),
             agent_token=_env_str("AGENT_TOKEN", ""),
+            agent_instance_id=_env_str("AGENT_INSTANCE_ID", ""),
             agent_auth_required=_env_bool("AGENT_AUTH_REQUIRED", True),
             pg_settings_interval=_env_int("PG_SETTINGS_INTERVAL", 60),
             pg_stats_interval=_env_int("PG_STATS_INTERVAL", 30),

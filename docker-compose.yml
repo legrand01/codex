@@ -84,6 +84,7 @@ services:
       - CONTROL_PLANE_URL=http://app:8000
       - AGENT_HOST_ID=${AGENT_HOST_ID:-}
       - AGENT_TOKEN=${AGENT_TOKEN:-}
+      - AGENT_INSTANCE_ID=${AGENT_INSTANCE_ID:-}
       - AGENT_AUTH_REQUIRED=${AGENT_AUTH_REQUIRED:-true}
       - AGENT_HOSTNAME=${AGENT_HOSTNAME:-w2j}
       - PG_CONNECTION_STRING=${PG_CONNECTION_STRING:-postgresql://pgai_user@host.docker.internal:5444/w2jmon_test?sslmode=require}
@@ -184,6 +185,7 @@ services:
       - CONTROL_PLANE_URL=http://app:8000
       - AGENT_HOST_ID=${TARGET_AGENT_HOST_ID:-}
       - AGENT_TOKEN=${TARGET_AGENT_TOKEN:-}
+      - AGENT_INSTANCE_ID=${TARGET_AGENT_INSTANCE_ID:-f9e89d36-f4cb-4f31-8b3a-e8a92fb4a916}
       - AGENT_AUTH_REQUIRED=${AGENT_AUTH_REQUIRED:-true}
       - AGENT_HOSTNAME=${TARGET_AGENT_HOSTNAME:-dbtune-target}
       - PG_CONNECTION_STRING=postgresql://dbtune:dbtune-lab-only@target-postgres:5432/dbtune_target

@@ -23,6 +23,7 @@ from backend.dependencies import get_db
 from backend.models.enums import PlanStatus
 from backend.models.plans import PlanDetail
 from backend.security import Principal, require_roles
+from backend.services.operational_events import OperationalEventRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +398,13 @@ async def approve_plan(
             """,
             row["run_id"],
         )
+        await OperationalEventRecorder().record(
+            "PLAN_APPROVED", "A DBA approved the configuration plan",
+            organization_id=principal.organization_id,
+            host_id=row["host_id"], run_id=row["run_id"],
+            details={"plan_id": str(plan_id), "approved_by": principal.subject},
+            connection=db,
+        )
         await db.execute(
             "UPDATE loop_runs SET status = 'queued' WHERE id = $1",
             row["run_id"],
@@ -513,6 +521,16 @@ async def reject_plan(
             """,
             row["run_id"],
             f"Plan rejected: {trimmed_reason}",
+        )
+        await OperationalEventRecorder().record(
+            "PLAN_REJECTED", "A DBA rejected the configuration plan",
+            organization_id=principal.organization_id,
+            host_id=row["host_id"], run_id=row["run_id"],
+            details={
+                "plan_id": str(plan_id), "rejected_by": principal.subject,
+                "reason": trimmed_reason,
+            },
+            connection=db,
         )
 
     # Notify DBA_Loop_Worker to re-plan with rejection feedback

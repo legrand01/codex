@@ -151,19 +151,40 @@ async def require_agent(
     host_id: UUID,
     x_agent_token: Optional[str] = Header(default=None, alias="X-Agent-Token"),
     db=Depends(get_db),
+    x_agent_instance_id: Optional[str] = Header(
+        default=None, alias="X-Agent-Instance-ID"
+    ),
 ) -> UUID:
-    if not settings.agent_auth_required:
+    direct_call_compat = not isinstance(x_agent_instance_id, (str, type(None)))
+    if direct_call_compat:
+        x_agent_instance_id = None
+    if not settings.agent_auth_required and not x_agent_instance_id:
         return host_id
-    if not x_agent_token:
+    if settings.agent_auth_required and not x_agent_token:
         raise HTTPException(status_code=401, detail="Host agent token is required")
-    row = await db.fetchrow(
-        "SELECT agent_token_hash FROM hosts WHERE id = $1",
-        host_id,
-    )
-    if row is None or not row["agent_token_hash"]:
-        raise HTTPException(status_code=401, detail="Host agent identity is not provisioned")
-    if not hmac.compare_digest(row["agent_token_hash"], hash_token(x_agent_token)):
-        raise HTTPException(status_code=401, detail="Invalid host agent token")
+    if settings.agent_auth_required:
+        row = await db.fetchrow(
+            "SELECT agent_token_hash FROM hosts WHERE id = $1",
+            host_id,
+        )
+        if row is None or not row["agent_token_hash"]:
+            raise HTTPException(status_code=401, detail="Host agent identity is not provisioned")
+        if not hmac.compare_digest(row["agent_token_hash"], hash_token(x_agent_token or "")):
+            raise HTTPException(status_code=401, detail="Invalid host agent token")
+    if direct_call_compat:
+        return host_id
+    if not x_agent_instance_id:
+        raise HTTPException(status_code=401, detail="Host agent instance identity is required")
+    try:
+        instance_id = UUID(x_agent_instance_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid host agent instance identity") from exc
+    from backend.services.agent_leases import renew_agent_lease
+
+    try:
+        await renew_agent_lease(db, host_id, instance_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     return host_id
 
 

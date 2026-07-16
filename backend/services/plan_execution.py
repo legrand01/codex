@@ -9,6 +9,7 @@ from uuid import UUID
 from backend.models.enums import PlanStatus
 from backend.services.audit_logger import AuditLogger, get_audit_logger
 from backend.services.configuration_backends import get_configuration_backend
+from backend.services.operational_events import OperationalEventRecorder
 
 
 class PlanExecutionError(RuntimeError):
@@ -43,6 +44,7 @@ class PlanExecutionService:
         self.audit_logger = audit_logger or get_audit_logger()
         # Retained as an injection seam for focused executor tests.
         self.target_executor = target_executor
+        self.events = OperationalEventRecorder(pool)
 
     async def _backend(self, host_id: UUID):
         if self.target_executor is not None:
@@ -87,6 +89,13 @@ class PlanExecutionService:
                 "approved_by": plan["approved_by"],
             },
         )
+        await self.events.record(
+            "CONFIG_APPLY_STARTED",
+            "Approved configuration apply started",
+            host_id=plan["host_id"],
+            run_id=plan["run_id"],
+            details={"plan_id": str(plan_id), "operation_id": str(operation["id"])},
+        )
 
         try:
             execution = await backend.apply(
@@ -129,6 +138,34 @@ class PlanExecutionService:
                 raise
 
             await self._complete(plan_id, operation["id"], result)
+            configuration_version_id = (
+                UUID(execution.configuration_version_id)
+                if execution.configuration_version_id
+                else None
+            )
+            await self.events.record(
+                "CONFIG_APPLY_SUCCEEDED",
+                "Configuration apply completed and values were verified",
+                host_id=plan["host_id"], run_id=plan["run_id"],
+                configuration_version_id=configuration_version_id,
+                details={"plan_id": str(plan_id), "verified_values": execution.verified_values},
+            )
+            reload_event = (
+                "CONFIG_RESTART_PENDING"
+                if execution.pending_restart
+                else "CONFIG_RELOAD_SUCCEEDED"
+            )
+            await self.events.record(
+                reload_event,
+                (
+                    "Configuration is staged and awaiting a controlled restart"
+                    if execution.pending_restart
+                    else "PostgreSQL configuration reload converged"
+                ),
+                host_id=plan["host_id"], run_id=plan["run_id"],
+                configuration_version_id=configuration_version_id,
+                details={"pending_restart": execution.pending_restart or []},
+            )
             return PlanExecutionOutcome(plan_id, operation["id"], result)
         except Exception as exc:
             await self._fail(plan_id, operation["id"], str(exc))
@@ -148,6 +185,20 @@ class PlanExecutionService:
                 )
             except Exception:
                 # The original audit or execution failure remains authoritative.
+                pass
+            try:
+                await self.events.record(
+                    "CONFIG_APPLY_FAILED", "Configuration apply failed",
+                    host_id=plan["host_id"], run_id=plan["run_id"],
+                    details={"plan_id": str(plan_id), "error": str(exc)},
+                )
+                if "reload" in str(exc).lower():
+                    await self.events.record(
+                        "CONFIG_RELOAD_FAILED", "PostgreSQL configuration reload failed",
+                        host_id=plan["host_id"], run_id=plan["run_id"],
+                        details={"plan_id": str(plan_id), "error": str(exc)},
+                    )
+            except Exception:
                 pass
             raise PlanExecutionError(f"Plan {plan_id} application failed: {exc}") from exc
 

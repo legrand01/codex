@@ -18,6 +18,7 @@ from uuid import UUID
 
 from backend.config import settings
 from backend.models.enums import PlanStatus
+from backend.services.operational_events import OperationalEventRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,12 @@ async def execute_rollback(
     """
     started_at = datetime.now(timezone.utc)
 
+    if control_pool is not None and host_id is not None:
+        await OperationalEventRecorder(control_pool).record(
+            "CONFIG_ROLLBACK_STARTED", "Verified configuration rollback started",
+            host_id=host_id, details={"plan_id": str(plan_id)},
+        )
+
     if settings.require_live_target_rollback or target_executor is not None:
         if host_id is None:
             raise RollbackInstructionsError("Live rollback requires a target host_id")
@@ -214,6 +221,17 @@ async def execute_rollback(
             )
             if not execution.succeeded or not execution.rolled_back:
                 raise RollbackError("Target executor did not verify rollback completion")
+            if control_pool is not None:
+                version_id = (
+                    UUID(execution.configuration_version_id)
+                    if execution.configuration_version_id else None
+                )
+                await OperationalEventRecorder(control_pool).record(
+                    "CONFIG_ROLLBACK_SUCCEEDED",
+                    "Configuration rollback completed and values were verified",
+                    host_id=host_id, configuration_version_id=version_id,
+                    details={"plan_id": str(plan_id)},
+                )
             return RollbackResult(
                 plan_id=plan_id,
                 status=RollbackStatus.COMPLETED,
@@ -221,9 +239,23 @@ async def execute_rollback(
                 completed_at=datetime.now(timezone.utc),
             )
         except asyncio.TimeoutError as exc:
+            if control_pool is not None:
+                await OperationalEventRecorder(control_pool).record(
+                    "CONFIG_ROLLBACK_FAILED", "Configuration rollback timed out",
+                    host_id=host_id,
+                    details={"plan_id": str(plan_id), "timeout": timeout},
+                )
             raise RollbackTimeoutError(
                 f"Rollback for plan {plan_id} exceeded {timeout} second timeout."
             ) from exc
+        except Exception as exc:
+            if control_pool is not None:
+                await OperationalEventRecorder(control_pool).record(
+                    "CONFIG_ROLLBACK_FAILED", "Configuration rollback failed",
+                    host_id=host_id,
+                    details={"plan_id": str(plan_id), "error": str(exc)},
+                )
+            raise
 
     try:
         result = await asyncio.wait_for(

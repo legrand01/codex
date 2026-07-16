@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     target_verify_timeout_sec: int = 10
     agent_command_timeout_sec: int = 120
     agent_command_poll_interval_sec: float = 0.25
+    agent_lease_seconds: int = 90
 
     # Loop Worker defaults
     max_iterations: int = 10

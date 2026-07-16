@@ -4,7 +4,9 @@ import {
   auditApi,
   baselinesApi,
   candidatesApi,
+  configurationsApi,
   evidenceApi,
+  eventsApi,
   fingerprintsApi,
   parameterCatalogApi,
   plansApi,
@@ -17,9 +19,11 @@ import type {
   AdvisoryFinding,
   BaselineMeasurement,
   ConfigurationVersion,
+  ConfigurationCompare,
   DBAReport,
   EvidenceSnapshot,
   PlanDetail,
+  OperationalEvent,
   ParameterDisposition,
   RunDetail,
   TuningCandidate,
@@ -97,10 +101,12 @@ interface SessionData {
   plans: PlanDetail[];
   evidence: EvidenceSnapshot[];
   activity: AuditEntry[];
+  operationalEvents: OperationalEvent[];
   report: DBAReport | null;
   refreshPlans: () => void;
   refreshCandidates: () => void;
   refreshParameterDispositions: () => void;
+  refreshConfigurationVersions: () => void;
   refreshRun: () => void;
 }
 
@@ -243,6 +249,37 @@ function PlansTab({ data, openEvidence }: { data: SessionData; openEvidence: (id
 
 function ConfigurationTab({ data }: { data: SessionData }) {
   const dispositions = data.parameterDispositions;
+  const [leftId, setLeftId] = useState(data.configurationVersions[1]?.id ?? '');
+  const [rightId, setRightId] = useState(data.configurationVersions[0]?.id ?? '');
+  const [comparison, setComparison] = useState<ConfigurationCompare | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [working, setWorking] = useState<string | null>(null);
+  const compare = async () => {
+    if (!leftId || !rightId || leftId === rightId) return;
+    setWorking('compare'); setActionError(null);
+    try { setComparison(await configurationsApi.compare(leftId, rightId)); }
+    catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
+    finally { setWorking(null); }
+  };
+  const download = async (version: ConfigurationVersion) => {
+    setWorking(version.id); setActionError(null);
+    try {
+      const text = await configurationsApi.download(version.id);
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+      const anchor = document.createElement('a');
+      anchor.href = url; anchor.download = `dbtune-${version.id}.conf`; anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
+    finally { setWorking(null); }
+  };
+  const reapply = async (version: ConfigurationVersion) => {
+    setWorking(version.id); setActionError(null);
+    try {
+      const result = await configurationsApi.reapply(version.id);
+      window.location.assign(`/tuning/${result.run_id}?tab=plans`);
+    } catch (error) { setActionError(error instanceof Error ? error.message : String(error)); }
+    finally { setWorking(null); }
+  };
   return <div>
     <div style={{ ...card, marginBottom: '12px', display: 'flex', justifyContent: 'space-between', gap: '14px' }}>
       <div><strong>{data.run.configuration_backend.replace(/_/g, ' ')}</strong><div style={subtle}>{dispositions.length} catalog entries · {dispositions.filter((item) => item.selected).length} selected for this objective</div></div>
@@ -250,10 +287,18 @@ function ConfigurationTab({ data }: { data: SessionData }) {
     </div>
     {data.configurationVersions.length > 0 && <div style={{ ...card, marginBottom: '12px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '9px' }}><div><div style={subtle}>Configuration history</div><strong>Apply and rollback provenance</strong></div><span style={subtle}>{data.configurationVersions.length} version(s)</span></div>
+      {data.configurationVersions.length > 1 && <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <select value={leftId} onChange={(event) => setLeftId(event.target.value)}>{data.configurationVersions.map((version) => <option key={version.id} value={version.id}>{version.id.slice(0, 8)} · {version.status}</option>)}</select>
+        <span>versus</span>
+        <select value={rightId} onChange={(event) => setRightId(event.target.value)}>{data.configurationVersions.map((version) => <option key={version.id} value={version.id}>{version.id.slice(0, 8)} · {version.status}</option>)}</select>
+        <button disabled={working === 'compare' || leftId === rightId} onClick={compare}>Compare</button>
+      </div>}
+      {comparison && <div style={{ ...card, background: '#f8fafc', marginBottom: '12px' }}><strong>Parameter differences</strong><div style={{ display: 'grid', gap: '5px', marginTop: '8px' }}>{comparison.differences.map((item) => <div key={item.setting_name} style={{ color: item.changed ? '#b45309' : '#4b5563' }}><code>{item.setting_name}</code>: {item.left_value ?? 'absent'} → {item.right_value ?? 'absent'}</div>)}</div></div>}
+      {actionError && <div style={{ color: '#b91c1c', marginBottom: '8px' }}>{actionError}</div>}
       <div style={{ display: 'grid', gap: '8px' }}>{data.configurationVersions.map((version) => <div key={version.id} style={{ borderTop: '1px solid #e5e7eb', paddingTop: '8px', display: 'grid', gridTemplateColumns: 'minmax(130px, .7fr) minmax(180px, 1.4fr) minmax(150px, 1fr)', gap: '10px', fontSize: '0.8rem' }}>
-        <div><strong style={{ textTransform: 'capitalize', color: version.status === 'active' ? '#15803d' : version.status === 'failed' ? '#b91c1c' : '#b45309' }}>{version.status.replace(/_/g, ' ')}</strong><div style={subtle}>{new Date(version.created_at).toLocaleString()}</div></div>
+        <div><strong style={{ textTransform: 'capitalize', color: version.status === 'active' ? '#15803d' : version.status === 'failed' ? '#b91c1c' : '#b45309' }}>{version.status.replace(/_/g, ' ')}</strong><div style={subtle}>{new Date(version.created_at).toLocaleString()}</div><div style={{ marginTop: '6px' }}><button disabled={working === version.id} onClick={() => download(version)}>Download</button>{['superseded', 'rolled_back'].includes(version.status) && <button disabled={working === version.id} onClick={() => reapply(version)} style={{ marginLeft: '6px' }}>Request reapply</button>}</div></div>
         <div><code>{version.managed_conf_path ?? version.configuration_backend}</code><div style={subtle}>{version.parameters.map((item) => String(item.setting_name ?? '')).filter(Boolean).join(', ') || 'No parameters recorded'}</div></div>
-        <div><span style={subtle}>Previous checksum</span><br /><code>{String((version.backend_snapshot.file as Record<string, unknown> | undefined)?.checksum ?? 'file absent').slice(0, 16)}</code>{version.error && <div style={{ color: '#b91c1c' }}>{version.error}</div>}</div>
+        <div><span style={subtle}>Verification</span><br /><code>{version.verified_at ? new Date(version.verified_at).toLocaleString() : 'not verified'}</code>{version.error && <div style={{ color: '#b91c1c' }}>{version.error}</div>}</div>
       </div>)}</div>
     </div>}
     {!dispositions.length ? <EmptyState title="No versioned parameter catalog is available for this target" /> : <div style={{ overflowX: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
@@ -367,6 +412,11 @@ function EvidenceTab({ data }: { data: SessionData }) {
 }
 
 function ActivityTab({ data }: { data: SessionData }) {
+  if (data.operationalEvents.length) return <div style={{ borderLeft: '2px solid #dbeafe', marginLeft: '8px', paddingLeft: '18px' }}>{data.operationalEvents.map((entry) => <div key={entry.id} style={{ ...card, marginBottom: '9px', position: 'relative' }}>
+    <span style={{ position: 'absolute', width: '10px', height: '10px', borderRadius: '50%', background: ['error', 'critical'].includes(entry.severity) ? '#dc2626' : entry.severity === 'warning' ? '#d97706' : '#16a34a', left: '-24px', top: '18px' }} />
+    <strong>{entry.event_code}</strong><div>{entry.message}</div>
+    <div style={subtle}>{new Date(entry.occurred_at).toLocaleString()} · {entry.component} · {entry.severity}</div>
+  </div>)}</div>;
   if (!data.activity.length) return <EmptyState title="No activity recorded yet" />;
   return <div style={{ borderLeft: '2px solid #dbeafe', marginLeft: '8px', paddingLeft: '18px' }}>{data.activity.map((entry) => <div key={entry.id} style={{ ...card, marginBottom: '9px', position: 'relative' }}>
     <span style={{ position: 'absolute', width: '10px', height: '10px', borderRadius: '50%', background: entry.result === 'success' ? '#16a34a' : entry.result === 'blocked' ? '#d97706' : '#dc2626', left: '-24px', top: '18px' }} />
@@ -402,6 +452,7 @@ function SessionWorkspace() {
   const plansRequest = useApi<PlanDetail[]>(() => plansApi.listRunPlans(runId), [runId]);
   const evidenceRequest = useApi<EvidenceSnapshot[]>(() => evidenceApi.listEvidence(runId), [runId]);
   const activityRequest = useApi<AuditEntry[]>(() => auditApi.getAuditLog(runId), [runId]);
+  const operationalEventsRequest = useApi<OperationalEvent[]>(() => eventsApi.list({ run_id: runId }), [runId]);
   const reportRequest = useApi<DBAReport>(() => reportsApi.getReport(runId), [runId]);
   const baselineRequest = useApi<BaselineMeasurement>(() => baselinesApi.get(runId), [runId]);
   const advisoriesRequest = useApi<AdvisoryFinding[]>(() => baselinesApi.listAdvisories(runId), [runId]);
@@ -428,10 +479,12 @@ function SessionWorkspace() {
     plans: plansRequest.data ?? [],
     evidence: evidenceRequest.data ?? [],
     activity: activityRequest.data ?? [],
+    operationalEvents: operationalEventsRequest.data ?? [],
     report: reportRequest.data,
     refreshPlans: plansRequest.refetch,
     refreshCandidates: candidatesRequest.refetch,
     refreshParameterDispositions: parameterDispositionsRequest.refetch,
+    refreshConfigurationVersions: configurationVersionsRequest.refetch,
     refreshRun: runRequest.refetch,
   };
   const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading || parameterDispositionsRequest.loading || configurationVersionsRequest.loading;

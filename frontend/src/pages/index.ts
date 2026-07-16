@@ -7,3 +7,5 @@ export { AuditLog } from './AuditLog';
 export { ReportsViewer } from './ReportsViewer';
 export { StartTuning } from './StartTuning';
 export { TuningSession } from './TuningSession';
+export { Events } from './Events';
+export { HostDiagnostics } from './HostDiagnostics';

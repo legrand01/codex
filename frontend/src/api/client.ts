@@ -33,6 +33,10 @@ import type {
   StartRunRequest,
   StartRunResponse,
   ReportSearchQuery,
+  ConfigurationCompare,
+  OperationalEvent,
+  CapabilityDiagnostic,
+  SetupGuide,
 } from './types';
 
 const BASE_URL = '/api/v1';
@@ -80,6 +84,15 @@ async function request<T>(
   return response.json();
 }
 
+async function requestText(path: string): Promise<string> {
+  const token = getApiToken();
+  const response = await fetch(`${BASE_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) throw new ApiError(response.status, await response.text());
+  return response.text();
+}
+
 // Fleet API
 export const fleetApi = {
   async listHosts(): Promise<HostSummary[]> {
@@ -88,6 +101,12 @@ export const fleetApi = {
   },
   getHost(hostId: string): Promise<HostSummary> {
     return request<HostSummary>(`/fleet/${hostId}`);
+  },
+  getDiagnostics(hostId: string): Promise<CapabilityDiagnostic> {
+    return request<CapabilityDiagnostic>(`/fleet/${hostId}/diagnostics`);
+  },
+  getSetup(hostId: string, mode = 'reload_only'): Promise<SetupGuide> {
+    return request<SetupGuide>(`/fleet/${hostId}/setup?mode=${encodeURIComponent(mode)}`);
   },
 };
 
@@ -202,6 +221,32 @@ export const parameterCatalogApi = {
   },
   listConfigurationVersions(runId: string): Promise<ConfigurationVersion[]> {
     return request<ConfigurationVersion[]>(`/runs/${runId}/configuration-versions`);
+  },
+};
+
+export const configurationsApi = {
+  compare(leftId: string, rightId: string): Promise<ConfigurationCompare> {
+    return request<ConfigurationCompare>(
+      `/configurations/compare?left_id=${leftId}&right_id=${rightId}`,
+    );
+  },
+  download(versionId: string): Promise<string> {
+    return requestText(`/configurations/${versionId}/download`);
+  },
+  reapply(versionId: string): Promise<{
+    run_id: string; plan_id: string; status: string; run_href: string;
+  }> {
+    return request(`/configurations/${versionId}/reapply`, { method: 'POST' });
+  },
+};
+
+export const eventsApi = {
+  async list(filters: Record<string, string> = {}): Promise<OperationalEvent[]> {
+    const params = new URLSearchParams(filters);
+    const response = await request<{ events: OperationalEvent[] }>(
+      `/events/?${params.toString()}`,
+    );
+    return response.events ?? [];
   },
 };
 

@@ -194,6 +194,310 @@ class ManagedHostPolicy:
     reload_permission: bool
 
 
+class ConfigurationVersionStore:
+    """Shared durable lifecycle for every configuration backend."""
+
+    def __init__(self, pool) -> None:
+        self.pool = pool
+
+    async def create(
+        self,
+        host_id: UUID,
+        *,
+        backend: str,
+        parameters: List[dict],
+        pre_change_snapshot: Mapping[str, Mapping[str, Any]],
+        plan_id: Optional[UUID],
+        operation_id: Optional[UUID],
+        managed_conf_path: Optional[str] = None,
+    ) -> UUID:
+        async with self.pool.acquire() as conn:
+            version_id = await conn.fetchval(
+                """
+                INSERT INTO configuration_versions (
+                    organization_id, host_id, plan_id, write_operation_id,
+                    run_id, database_name, configuration_backend, status,
+                    managed_conf_path, parameters, pre_change_snapshot,
+                    source_provenance, origin_configuration_version_id
+                )
+                SELECT h.organization_id, h.id, p.id, $3, p.run_id,
+                       h.database_name, $4, 'applying', $5, $6::jsonb,
+                       $7::jsonb, $8::jsonb,
+                       p.source_configuration_version_id
+                FROM hosts h
+                LEFT JOIN plans p ON p.id = $2
+                WHERE h.id = $1
+                RETURNING id
+                """,
+                host_id,
+                plan_id,
+                operation_id,
+                backend,
+                managed_conf_path,
+                json.dumps(parameters),
+                json.dumps(dict(pre_change_snapshot)),
+                json.dumps({"before": dict(pre_change_snapshot)}),
+            )
+        if version_id is None:
+            raise TargetValidationError(f"Target host {host_id} does not exist")
+        return version_id
+
+    async def mark_applied(
+        self,
+        version_id: UUID,
+        *,
+        status: str,
+        backend_snapshot: Mapping[str, Any],
+        result: Mapping[str, Any],
+    ) -> None:
+        durable_result = dict(result)
+        durable_result.pop("backend_snapshot", None)
+        verification = {
+            "verified_values": durable_result.get("verified_values") or {},
+            "pending_restart": durable_result.get("pending_restart") or [],
+            "succeeded": bool(durable_result.get("succeeded", True)),
+        }
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    UPDATE configuration_versions current
+                    SET status = 'superseded', superseded_at = NOW(), updated_at = NOW()
+                    FROM configuration_versions replacement
+                    WHERE replacement.id = $1
+                      AND current.id <> replacement.id
+                      AND current.host_id = replacement.host_id
+                      AND current.database_name IS NOT DISTINCT FROM replacement.database_name
+                      AND current.status IN ('active', 'pending_restart')
+                    """,
+                    version_id,
+                )
+                await conn.execute(
+                    """
+                    UPDATE configuration_versions
+                    SET status = $2, backend_snapshot = $3::jsonb,
+                        apply_result = $4::jsonb,
+                        source_provenance = source_provenance || $5::jsonb,
+                        verification_result = $6::jsonb,
+                        applied_at = COALESCE(applied_at, NOW()),
+                        verified_at = NOW(), updated_at = NOW(), error = NULL
+                    WHERE id = $1
+                    """,
+                    version_id,
+                    status,
+                    json.dumps(dict(backend_snapshot)),
+                    json.dumps(durable_result),
+                    json.dumps(
+                        {
+                            "after": {
+                                "sourcefile": durable_result.get("sourcefile"),
+                                "verified_values": durable_result.get("verified_values") or {},
+                            }
+                        }
+                    ),
+                    json.dumps(verification),
+                )
+
+    async def mark_failed(self, version_id: UUID, error: str) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE configuration_versions
+                SET status = 'failed', error = $2, updated_at = NOW()
+                WHERE id = $1
+                """,
+                version_id,
+                error,
+            )
+
+    async def mark_rolling_back(self, version_id: UUID) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE configuration_versions
+                SET status = 'rolling_back', updated_at = NOW() WHERE id = $1
+                """,
+                version_id,
+            )
+
+    async def mark_rolled_back(
+        self, version_id: UUID, result: Mapping[str, Any]
+    ) -> None:
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE configuration_versions
+                SET status = 'rolled_back', rollback_result = $2::jsonb,
+                    verification_result = $3::jsonb,
+                    rolled_back_at = NOW(), verified_at = NOW(), updated_at = NOW()
+                WHERE id = $1
+                """,
+                version_id,
+                json.dumps(dict(result)),
+                json.dumps(
+                    {
+                        "succeeded": bool(result.get("succeeded", True)),
+                        "rolled_back": True,
+                        "verified_values": result.get("verified_values") or {},
+                        "pending_restart": result.get("pending_restart") or [],
+                    }
+                ),
+            )
+
+
+class AlterSystemBackend:
+    """Versioned parameter-scoped ALTER SYSTEM backend."""
+
+    backend_name = "alter_system"
+
+    def __init__(self, pool) -> None:
+        self.pool = pool
+        self.executor = TargetPostgresExecutor(pool)
+        self.versions = ConfigurationVersionStore(pool)
+
+    async def capture_snapshot(self, host_id: UUID, setting_names: List[str]):
+        return await self.executor.capture_snapshot(host_id, setting_names)
+
+    async def dry_run(self, host_id: UUID, proposed_changes: List[dict]):
+        return await self.executor.dry_run(host_id, proposed_changes)
+
+    async def read_current_values(self, host_id: UUID, setting_names: List[str]):
+        return await self.executor.read_current_values(host_id, setting_names)
+
+    async def verify_expected_values(self, host_id: UUID, expected: Mapping[str, Any]):
+        return await self.executor.verify_expected_values(host_id, expected)
+
+    async def apply(
+        self,
+        host_id: UUID,
+        proposed_changes: List[dict],
+        expected_snapshot: Mapping[str, Mapping[str, Any]],
+        *,
+        plan_id: Optional[UUID] = None,
+        operation_id: Optional[UUID] = None,
+    ) -> ExecutionResult:
+        version_id = await self.versions.create(
+            host_id,
+            backend=self.backend_name,
+            parameters=proposed_changes,
+            pre_change_snapshot=expected_snapshot,
+            plan_id=plan_id,
+            operation_id=operation_id,
+        )
+        try:
+            execution = await self.executor.apply(
+                host_id,
+                proposed_changes,
+                expected_snapshot,
+                plan_id=plan_id,
+                operation_id=operation_id,
+            )
+            result = execution.to_dict()
+            status = "pending_restart" if execution.pending_restart else "active"
+            await self.versions.mark_applied(
+                version_id,
+                status=status,
+                backend_snapshot={},
+                result=result,
+            )
+            return ExecutionResult(
+                execution.succeeded,
+                execution.changed_settings,
+                execution.verified_values,
+                pending_restart=execution.pending_restart,
+                configuration_version_id=str(version_id),
+            )
+        except Exception as exc:
+            await self.versions.mark_failed(version_id, str(exc))
+            raise
+
+    async def rollback(
+        self,
+        host_id: UUID,
+        snapshot: Mapping[str, Mapping[str, Any]],
+        backend_snapshot: Optional[Mapping[str, Any]] = None,
+        *,
+        plan_id: Optional[UUID] = None,
+        operation_id: Optional[UUID] = None,
+    ) -> ExecutionResult:
+        version_id = (backend_snapshot or {}).get("configuration_version_id")
+        if version_id is None and plan_id is not None:
+            async with self.pool.acquire() as conn:
+                version_id = await conn.fetchval(
+                    """
+                    SELECT id FROM configuration_versions
+                    WHERE plan_id = $1 AND configuration_backend = 'alter_system'
+                      AND status IN ('active', 'pending_restart', 'failed', 'superseded')
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    plan_id,
+                )
+        if version_id:
+            await self.versions.mark_rolling_back(UUID(str(version_id)))
+        execution = await self.executor.rollback(
+            host_id,
+            snapshot,
+            plan_id=plan_id,
+            operation_id=operation_id,
+        )
+        if version_id:
+            await self.versions.mark_rolled_back(
+                UUID(str(version_id)), execution.to_dict()
+            )
+        return ExecutionResult(
+            execution.succeeded,
+            execution.changed_settings,
+            execution.verified_values,
+            rolled_back=True,
+            pending_restart=execution.pending_restart,
+            configuration_version_id=str(version_id) if version_id else None,
+        )
+
+    async def reconcile_applied(
+        self,
+        host_id: UUID,
+        *,
+        plan_id: UUID,
+        operation_id: UUID,
+        verified_values: Mapping[str, str],
+    ) -> Optional[ExecutionResult]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, parameters FROM configuration_versions
+                WHERE host_id = $1 AND plan_id = $2 AND write_operation_id = $3
+                  AND status IN ('applying', 'active', 'pending_restart')
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                host_id,
+                plan_id,
+                operation_id,
+            )
+        if row is None:
+            return None
+        parameters = (
+            json.loads(row["parameters"])
+            if isinstance(row["parameters"], str)
+            else list(row["parameters"])
+        )
+        result = {
+            "succeeded": True,
+            "changed_settings": [item["setting_name"] for item in parameters],
+            "verified_values": dict(verified_values),
+            "pending_restart": [],
+            "recovered_after_worker_restart": True,
+        }
+        await self.versions.mark_applied(
+            row["id"], status="active", backend_snapshot={}, result=result
+        )
+        return ExecutionResult(
+            True,
+            result["changed_settings"],
+            dict(verified_values),
+            configuration_version_id=str(row["id"]),
+        )
+
+
 class ManagedConfFileBackend:
     """Apply a deterministic, agent-owned PostgreSQL include file."""
 
@@ -203,6 +507,7 @@ class ManagedConfFileBackend:
         self.pool = pool
         self.reader = TargetPostgresExecutor(pool)
         self.transport = transport or AgentCommandTransport(pool)
+        self.versions = ConfigurationVersionStore(pool)
 
     @staticmethod
     def _mapping(value: Any) -> Dict[str, Any]:
@@ -304,7 +609,16 @@ class ManagedConfFileBackend:
                 },
                 idempotency_key=f"preflight:{host_id}:{uuid4()}",
             )
-            return DryRunResult(bool(result.get("passed")), snapshot, result.get("errors", []))
+            errors = list(result.get("errors") or [])
+            if any("precedence" in error.lower() or "source" in error.lower() for error in errors):
+                from backend.services.operational_events import OperationalEventRecorder
+
+                await OperationalEventRecorder(self.pool).record(
+                    "CONFIG_PRECEDENCE_CONFLICT",
+                    "A higher-precedence PostgreSQL source blocked managed configuration",
+                    host_id=host_id, details={"errors": errors},
+                )
+            return DryRunResult(bool(result.get("passed")), snapshot, errors)
         except TargetExecutionError as exc:
             return DryRunResult(False, {}, [str(exc)])
         except Exception as exc:
@@ -325,25 +639,15 @@ class ManagedConfFileBackend:
         if set(names) != set(expected_snapshot):
             raise TargetValidationError("Expected pre-change snapshot does not match the plan")
         await self._allowlist(host_id, names)
-        async with self.pool.acquire() as conn:
-            version_id = await conn.fetchval(
-                """
-                INSERT INTO configuration_versions (
-                    organization_id, host_id, plan_id, write_operation_id,
-                    configuration_backend, status, managed_conf_path,
-                    parameters, pre_change_snapshot
-                ) VALUES ($1, $2, $3, $4, $5, 'applying', $6, $7::jsonb, $8::jsonb)
-                RETURNING id
-                """,
-                policy.organization_id,
-                host_id,
-                plan_id,
-                operation_id,
-                self.backend_name,
-                policy.managed_conf_path,
-                json.dumps(changes),
-                json.dumps(dict(expected_snapshot)),
-            )
+        version_id = await self.versions.create(
+            host_id,
+            backend=self.backend_name,
+            parameters=changes,
+            pre_change_snapshot=expected_snapshot,
+            plan_id=plan_id,
+            operation_id=operation_id,
+            managed_conf_path=policy.managed_conf_path,
+        )
         try:
             result = await self.transport.execute(
                 host_id,
@@ -359,21 +663,12 @@ class ManagedConfFileBackend:
             backend_snapshot = result.get("backend_snapshot") or {}
             pending = list(result.get("pending_restart") or [])
             status = "pending_restart" if pending else "active"
-            durable_result = dict(result)
-            durable_result.pop("backend_snapshot", None)
-            async with self.pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE configuration_versions
-                    SET status = $2, backend_snapshot = $3::jsonb,
-                        apply_result = $4::jsonb, applied_at = NOW(), updated_at = NOW()
-                    WHERE id = $1
-                    """,
-                    version_id,
-                    status,
-                    json.dumps(backend_snapshot),
-                    json.dumps(durable_result),
-                )
+            await self.versions.mark_applied(
+                version_id,
+                status=status,
+                backend_snapshot=backend_snapshot,
+                result=result,
+            )
             return ExecutionResult(
                 succeeded=True,
                 changed_settings=names,
@@ -383,16 +678,7 @@ class ManagedConfFileBackend:
                 configuration_version_id=str(version_id),
             )
         except Exception as exc:
-            async with self.pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE configuration_versions
-                    SET status = 'failed', error = $2, updated_at = NOW()
-                    WHERE id = $1
-                    """,
-                    version_id,
-                    str(exc),
-                )
+            await self.versions.mark_failed(version_id, str(exc))
             raise
 
     async def rollback(
@@ -447,14 +733,7 @@ class ManagedConfFileBackend:
                     "configuration version and durable agent command"
                 )
         if version_id:
-            async with self.pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE configuration_versions SET status='rolling_back', updated_at=NOW()
-                    WHERE id=$1
-                    """,
-                    UUID(str(version_id)),
-                )
+            await self.versions.mark_rolling_back(UUID(str(version_id)))
         result = await self.transport.execute(
             host_id,
             "managed_conf_rollback",
@@ -467,17 +746,7 @@ class ManagedConfFileBackend:
             configuration_version_id=UUID(str(version_id)) if version_id else None,
         )
         if version_id:
-            async with self.pool.acquire() as conn:
-                await conn.execute(
-                    """
-                    UPDATE configuration_versions
-                    SET status='rolled_back', rollback_result=$2::jsonb,
-                        rolled_back_at=NOW(), updated_at=NOW()
-                    WHERE id=$1
-                    """,
-                    UUID(str(version_id)),
-                    json.dumps(result),
-                )
+            await self.versions.mark_rolled_back(UUID(str(version_id)), result)
         return ExecutionResult(
             True,
             list(snapshot),
@@ -557,20 +826,12 @@ class ManagedConfFileBackend:
         durable_result["recovered_after_worker_restart"] = True
         durable_result["verified_values"] = dict(verified_values)
         status = "pending_restart" if pending else "active"
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE configuration_versions
-                SET status = $2, backend_snapshot = $3::jsonb,
-                    apply_result = $4::jsonb,
-                    applied_at = COALESCE(applied_at, NOW()), updated_at = NOW()
-                WHERE id = $1
-                """,
-                row["id"],
-                status,
-                json.dumps(stored),
-                json.dumps(durable_result),
-            )
+        await self.versions.mark_applied(
+            row["id"],
+            status=status,
+            backend_snapshot=stored,
+            result=durable_result,
+        )
         return ExecutionResult(
             succeeded=True,
             changed_settings=names,
@@ -601,6 +862,7 @@ class ProviderConfigurationBackend:
         self.platform_type = platform_type
         self.adapter = adapter
         self.reader = TargetPostgresExecutor(pool)
+        self.versions = ConfigurationVersionStore(pool)
 
     def _require_adapter(self) -> ProviderAdapter:
         if self.adapter is None:
@@ -643,21 +905,106 @@ class ProviderConfigurationBackend:
         target_policy = await self.reader.load_policy(host_id)
         self.reader.assert_write_allowed(target_policy)
         changes = self.reader._validate_changes(proposed_changes)
-        operation = await adapter.stage_apply(host_id, changes, expected_snapshot)
-        state = await adapter.poll(host_id, operation)
-        pending = list(state.get("pending_restart") or [])
-        expected = {
-            change["setting_name"]: change["proposed_value"]
-            for change in changes
-            if change["setting_name"] not in pending
+        plan_id = kwargs.get("plan_id")
+        operation_id = kwargs.get("operation_id")
+        version_id = await self.versions.create(
+            host_id,
+            backend="provider",
+            parameters=changes,
+            pre_change_snapshot=expected_snapshot,
+            plan_id=plan_id,
+            operation_id=operation_id,
+        )
+        try:
+            operation = await adapter.stage_apply(host_id, changes, expected_snapshot)
+            state = await adapter.poll(host_id, operation)
+            pending = list(state.get("pending_restart") or [])
+            expected = {
+                change["setting_name"]: change["proposed_value"]
+                for change in changes
+                if change["setting_name"] not in pending
+            }
+            verified = (
+                await adapter.verify(host_id, operation, expected) if expected else {}
+            )
+            backend_snapshot = {
+                "provider_operation": operation,
+                "provider_state": state,
+            }
+            result = {
+                "succeeded": True,
+                "changed_settings": [change["setting_name"] for change in changes],
+                "verified_values": verified,
+                "pending_restart": pending,
+            }
+            await self.versions.mark_applied(
+                version_id,
+                status="pending_restart" if pending else "active",
+                backend_snapshot=backend_snapshot,
+                result=result,
+            )
+            return ExecutionResult(
+                True,
+                result["changed_settings"],
+                verified,
+                pending_restart=pending,
+                backend_snapshot=backend_snapshot,
+                configuration_version_id=str(version_id),
+            )
+        except Exception as exc:
+            await self.versions.mark_failed(version_id, str(exc))
+            raise
+
+    async def reconcile_applied(
+        self,
+        host_id: UUID,
+        *,
+        plan_id: UUID,
+        operation_id: UUID,
+        verified_values: Mapping[str, str],
+    ) -> Optional[ExecutionResult]:
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, parameters, apply_result, backend_snapshot
+                FROM configuration_versions
+                WHERE host_id = $1 AND plan_id = $2 AND write_operation_id = $3
+                  AND status IN ('applying', 'active', 'pending_restart')
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                host_id, plan_id, operation_id,
+            )
+        if row is None:
+            return None
+        parameters = (
+            json.loads(row["parameters"])
+            if isinstance(row["parameters"], str)
+            else list(row["parameters"])
+        )
+        prior = row["apply_result"] or {}
+        if isinstance(prior, str):
+            prior = json.loads(prior)
+        pending = list(prior.get("pending_restart") or [])
+        result = {
+            "succeeded": True,
+            "changed_settings": [item["setting_name"] for item in parameters],
+            "verified_values": dict(verified_values),
+            "pending_restart": pending,
+            "recovered_after_worker_restart": True,
         }
-        verified = await adapter.verify(host_id, operation, expected) if expected else {}
+        snapshot = row["backend_snapshot"] or {}
+        if isinstance(snapshot, str):
+            snapshot = json.loads(snapshot)
+        await self.versions.mark_applied(
+            row["id"],
+            status="pending_restart" if pending else "active",
+            backend_snapshot=snapshot,
+            result=result,
+        )
         return ExecutionResult(
-            True,
-            [change["setting_name"] for change in changes],
-            verified,
-            pending_restart=pending,
-            backend_snapshot={"provider_operation": operation, "provider_state": state},
+            True, result["changed_settings"], dict(verified_values),
+            pending_restart=pending, backend_snapshot=snapshot,
+            configuration_version_id=str(row["id"]),
         )
 
     async def rollback(
@@ -668,19 +1015,40 @@ class ProviderConfigurationBackend:
         **kwargs,
     ) -> ExecutionResult:
         adapter = self._require_adapter()
+        plan_id = kwargs.get("plan_id")
+        version_id = (backend_snapshot or {}).get("configuration_version_id")
+        if version_id is None and plan_id is not None:
+            async with self.pool.acquire() as conn:
+                version_id = await conn.fetchval(
+                    """
+                    SELECT id FROM configuration_versions
+                    WHERE plan_id = $1 AND configuration_backend = 'provider'
+                      AND status IN ('active', 'pending_restart', 'failed', 'superseded')
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    plan_id,
+                )
+        if version_id:
+            await self.versions.mark_rolling_back(UUID(str(version_id)))
         result = await adapter.rollback(host_id, snapshot, backend_snapshot or {})
         operation = result.get("operation") or result
         await adapter.poll(host_id, operation)
         expected = {name: state["value"] for name, state in snapshot.items()}
         verified = await adapter.verify(host_id, operation, expected)
-        return ExecutionResult(
+        execution = ExecutionResult(
             True,
             list(snapshot),
             verified,
             rolled_back=True,
             pending_restart=list(result.get("pending_restart") or []),
             backend_snapshot=dict(backend_snapshot or {}),
+            configuration_version_id=str(version_id) if version_id else None,
         )
+        if version_id:
+            await self.versions.mark_rolled_back(
+                UUID(str(version_id)), execution.to_dict()
+            )
+        return execution
 
 
 class ConfigurationBackendRouter:
@@ -697,7 +1065,7 @@ class ConfigurationBackendRouter:
             raise TargetValidationError(f"Target host {host_id} does not exist")
         backend = row["configuration_backend"]
         if backend == "alter_system":
-            return TargetPostgresExecutor(self.pool)
+            return AlterSystemBackend(self.pool)
         if backend == "managed_conf_file":
             return ManagedConfFileBackend(self.pool)
         if backend == "provider":

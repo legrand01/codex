@@ -699,31 +699,31 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     - Real PostgreSQL tests for include_dir, postgres.auto.conf conflict, invalid pg_file_settings, reload failure, and restart-pending state
     - _Requirements: 19.4, 19.5, 19.6, 19.7, 19.8, 19.9_
 
-- [ ] 25. Configuration history, agent capabilities, and coded events
+- [x] 25. Configuration history, agent capabilities, and coded events
 
-  - [ ] 25.1 Implement configuration version history
+  - [x] 25.1 Implement configuration version history
     - Store active/superseded/rolled-back/failed versions with originating session, backend, values, source provenance, and verification
     - Add compare, redacted download, and guarded re-apply APIs and UI
     - _Requirements: 20.1, 20.2_
 
-  - [~] 25.2 Implement Agent capability diagnostics and setup guide
+  - [x] 25.2 Implement Agent capability diagnostics and setup guide
     - Report connectivity, system info/metrics, pg_stat_statements, query collection, read/write/reload/restart/provider capabilities independently
     - Generate PostgreSQL-version, mode, and backend-specific least-privilege setup instructions
     - _Requirements: 20.3, 20.4_
 
-  - [ ] 25.3 Implement agent lease and duplicate detection
+  - [x] 25.3 Implement agent lease and duplicate detection
     - Add single-writer lease per host identity
     - Emit duplicate/resolved event codes and block writes while lease ownership is ambiguous
     - _Requirements: 20.5_
 
-  - [ ] 25.4 Implement structured operational event history
+  - [x] 25.4 Implement structured operational event history
     - Add event-code catalog and host_events persistence
     - Add filters for time, severity, code, host, session, component, and text
     - Link events to sessions and configuration versions
     - Emit events for candidate, agent, configuration, approval, reload/restart, rollback, and report outcomes
     - _Requirements: 20.6, 20.7_
 
-  - [ ]* 25.5 Test history, diagnostics, and event safety
+  - [x]* 25.5 Test history, diagnostics, and event safety
     - Property 42: duplicate agents exclude writes
     - Test configuration compare/reapply approval path and redacted download
     - Test event filters and deep links

@@ -24,6 +24,7 @@ from uuid import UUID, uuid4
 
 from backend.db.pool import get_pool
 from backend.models.reports import DBAReport
+from backend.services.operational_events import OperationalEventRecorder
 from backend.services.parameter_catalog import refresh_parameter_dispositions
 
 logger = logging.getLogger(__name__)
@@ -683,6 +684,15 @@ class ReportGenerator:
                     generated_at,
                 )
 
+            try:
+                await OperationalEventRecorder(self.pool).record(
+                    "REPORT_GENERATED", "Tuning report was generated",
+                    host_id=run.get("host_id"), run_id=run_id,
+                    details={"report_id": str(persisted_report_id), "outcome": outcome_status},
+                )
+            except Exception:
+                logger.exception("Could not persist REPORT_GENERATED event")
+
             # Return the DBAReport model
             return DBAReport(
                 id=persisted_report_id,
@@ -703,6 +713,13 @@ class ReportGenerator:
             raise
         except Exception as e:
             logger.error(f"Failed to generate report for run {run_id}: {e}")
+            try:
+                await OperationalEventRecorder(self.pool).record(
+                    "REPORT_GENERATION_FAILED", "Tuning report generation failed",
+                    run_id=run_id, details={"error": str(e)},
+                )
+            except Exception:
+                logger.exception("Could not persist REPORT_GENERATION_FAILED event")
             raise ReportGenerationError(f"Failed to generate report for run {run_id}: {e}") from e
 
 

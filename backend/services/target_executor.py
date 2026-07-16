@@ -52,6 +52,7 @@ class HostExecutionPolicy:
     server_role: Optional[str]
     target_dsn_env: Optional[str]
     writes_enabled: bool
+    agent_write_ambiguous: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,7 @@ class TargetPostgresExecutor:
             row = await conn.fetchrow(
                 """
                 SELECT id, hostname, environment, server_role,
-                       target_dsn_env, writes_enabled
+                       target_dsn_env, writes_enabled, agent_write_ambiguous
                 FROM hosts
                 WHERE id = $1
                 """,
@@ -150,6 +151,7 @@ class TargetPostgresExecutor:
             server_role=row["server_role"],
             target_dsn_env=row["target_dsn_env"],
             writes_enabled=bool(row["writes_enabled"]),
+            agent_write_ambiguous=bool(row.get("agent_write_ambiguous", False)),
         )
 
     def resolve_dsn(self, policy: HostExecutionPolicy, *, for_write: bool) -> str:
@@ -180,6 +182,11 @@ class TargetPostgresExecutor:
             raise WriteInterlockError("Global target write execution is disabled")
         if not policy.writes_enabled:
             raise WriteInterlockError("Writes are disabled for this host")
+        if policy.agent_write_ambiguous:
+            raise WriteInterlockError(
+                "Target writes are blocked because multiple active Host Agents "
+                "share this host identity"
+            )
         if policy.server_role != "primary":
             raise WriteInterlockError("Target writes require a confirmed primary server")
         if policy.environment == "production":

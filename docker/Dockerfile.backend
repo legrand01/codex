@@ -20,7 +20,8 @@ COPY host_agent/ ./host_agent/
 
 # Create non-root user for security
 RUN adduser --disabled-password --gecos "" appuser && \
-    chown -R appuser:appuser /app
+    mkdir -p /var/lib/dbtune-agent && \
+    chown -R appuser:appuser /app /var/lib/dbtune-agent
 USER appuser
 
 # Expose port

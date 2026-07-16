@@ -12,6 +12,7 @@ Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
 
 import json
 import logging
+import re
 import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -30,6 +31,7 @@ from backend.services.fleet_service import (
     classify_connection_status,
     process_heartbeat,
 )
+from backend.services.operational_events import OperationalEventRecorder
 
 # Expose as derive_connection_status for backward compatibility
 derive_connection_status = classify_connection_status
@@ -166,6 +168,34 @@ class AgentCommandResultRequest(BaseModel):
     error: Optional[str] = None
 
 
+class CapabilityDiagnosticResponse(BaseModel):
+    host_id: UUID
+    hostname: str
+    database_name: Optional[str] = None
+    pg_version: Optional[str] = None
+    platform_type: str
+    configuration_backend: str
+    observed_at: Optional[datetime] = None
+    capabilities: Dict[str, bool]
+    agent_write_ambiguous: bool
+    lease_holder_id: Optional[UUID] = None
+    lease_expires_at: Optional[datetime] = None
+    active_agents: List[Dict[str, Any]]
+
+
+class SetupGuideResponse(BaseModel):
+    host_id: UUID
+    pg_major: Optional[int] = None
+    configuration_backend: str
+    mode: str
+    prerequisites: List[str]
+    sql: List[str]
+    agent_environment: Dict[str, str]
+    file_instructions: List[str]
+    provider_instructions: List[str]
+    cautions: List[str]
+
+
 ALLOWED_EVIDENCE_TYPES = {
     "pg_settings",
     "pg_stat_database",
@@ -175,6 +205,154 @@ ALLOWED_EVIDENCE_TYPES = {
     "wal_checkpoint",
     "os_metrics",
 }
+
+
+@router.get("/{host_id}/diagnostics", response_model=CapabilityDiagnosticResponse)
+async def get_capability_diagnostics(
+    host_id: UUID,
+    db=Depends(get_db),
+    principal: Principal = Depends(
+        require_roles("viewer", "operator", "approver", "admin")
+    ),
+) -> CapabilityDiagnosticResponse:
+    row = await db.fetchrow(
+        """
+        SELECT h.id, h.hostname, h.database_name, h.pg_version, h.platform_type,
+               h.configuration_backend, h.agent_write_ambiguous,
+               h.agent_lease_holder_id, h.agent_lease_expires_at,
+               c.connectivity, c.system_information, c.system_metrics,
+               c.pg_stat_statements, c.query_text_collection,
+               c.configuration_read, c.configuration_write,
+               c.reload_permission, c.restart_capability, c.provider_api,
+               c.managed_file_access, c.observed_at
+        FROM hosts h LEFT JOIN host_capabilities c ON c.host_id = h.id
+        WHERE h.id = $1 AND h.organization_id = $2
+        """,
+        host_id,
+        principal.organization_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Host '{host_id}' not found")
+    agents = await db.fetch(
+        """
+        SELECT instance_id, first_seen_at, last_seen_at, lease_expires_at, details
+        FROM host_agent_instances
+        WHERE host_id = $1 AND lease_expires_at > NOW()
+        ORDER BY last_seen_at DESC
+        """,
+        host_id,
+    )
+    capability_names = (
+        "connectivity", "system_information", "system_metrics",
+        "pg_stat_statements", "query_text_collection", "configuration_read",
+        "configuration_write", "reload_permission", "restart_capability",
+        "provider_api", "managed_file_access",
+    )
+    return CapabilityDiagnosticResponse(
+        host_id=row["id"], hostname=row["hostname"],
+        database_name=row["database_name"], pg_version=row["pg_version"],
+        platform_type=row["platform_type"],
+        configuration_backend=row["configuration_backend"],
+        observed_at=row["observed_at"],
+        capabilities={name: bool(row[name]) for name in capability_names},
+        agent_write_ambiguous=bool(row["agent_write_ambiguous"]),
+        lease_holder_id=row["agent_lease_holder_id"],
+        lease_expires_at=row["agent_lease_expires_at"],
+        active_agents=[dict(agent) for agent in agents],
+    )
+
+
+@router.get("/{host_id}/setup", response_model=SetupGuideResponse)
+async def get_setup_guide(
+    host_id: UUID,
+    mode: str = "reload_only",
+    db=Depends(get_db),
+    principal: Principal = Depends(
+        require_roles("viewer", "operator", "approver", "admin")
+    ),
+) -> SetupGuideResponse:
+    if mode not in {"reload_only", "restart_enabled"}:
+        raise HTTPException(status_code=422, detail="Unsupported tuning mode")
+    host = await db.fetchrow(
+        """
+        SELECT id, pg_version, platform_type, configuration_backend,
+               managed_conf_path, target_dsn_env
+        FROM hosts WHERE id = $1 AND organization_id = $2
+        """,
+        host_id,
+        principal.organization_id,
+    )
+    if host is None:
+        raise HTTPException(status_code=404, detail=f"Host '{host_id}' not found")
+    allowlist = await db.fetch(
+        """
+        SELECT setting_name, parameter_context FROM guardrail_allowlist
+        WHERE host_id = $1 ORDER BY setting_name
+        """,
+        host_id,
+    )
+    version_match = re.search(r"(?<!\d)(\d{1,2})(?:\.\d+)", str(host["pg_version"] or ""))
+    pg_major = int(version_match.group(1)) if version_match else None
+    settings_list = [str(item["setting_name"]) for item in allowlist]
+    sql = [
+        "GRANT CONNECT ON DATABASE <database> TO dbtune_agent;",
+        "GRANT pg_monitor TO dbtune_agent;",
+        "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;",
+    ]
+    if host["configuration_backend"] == "alter_system":
+        if pg_major is not None and pg_major >= 15:
+            sql.extend(
+                f'GRANT ALTER SYSTEM ON PARAMETER "{name}" TO dbtune_agent;'
+                for name in settings_list
+            )
+        else:
+            sql.append(
+                "Use a narrowly scoped SECURITY DEFINER function for allowlisted settings; "
+                "PostgreSQL 15+ parameter grants are preferred."
+            )
+        sql.append("GRANT EXECUTE ON FUNCTION pg_reload_conf() TO dbtune_agent;")
+    file_instructions: List[str] = []
+    provider_instructions: List[str] = []
+    if host["configuration_backend"] == "managed_conf_file":
+        path = host["managed_conf_path"] or "<PGDATA>/conf.d/postgres_tune.conf"
+        file_instructions = [
+            "Add include_dir = 'conf.d' to postgresql.conf once, then verify it is loaded.",
+            f"Create {path} with owner postgres and mode 0600.",
+            "Grant the agent write access only to that file and its parent directory.",
+            "Keep postgresql.auto.conf untouched; every apply uses atomic replace "
+            "and pg_reload_conf().",
+        ]
+    if host["configuration_backend"] == "provider":
+        provider_instructions = [
+            f"Create a least-privilege {host['platform_type']} API identity for parameter changes.",
+            "Limit it to the enrolled instance or parameter group and the allowlisted settings.",
+            "Grant read/status polling separately from write/apply permission.",
+        ]
+    cautions = [
+        "Use one unique AGENT_INSTANCE_ID and one private state volume per installation.",
+        "Query text collection is optional and should be disabled where SQL text is sensitive.",
+    ]
+    if mode == "restart_enabled":
+        cautions.append("Restart changes remain pending until a controlled restart is verified.")
+    return SetupGuideResponse(
+        host_id=host_id, pg_major=pg_major,
+        configuration_backend=host["configuration_backend"], mode=mode,
+        prerequisites=[
+            "Outbound HTTPS from agent to control plane",
+            "Read-only PostgreSQL monitoring connection",
+            "pg_stat_statements in shared_preload_libraries when required by this PG version",
+        ],
+        sql=sql,
+        agent_environment={
+            "AGENT_HOST_ID": str(host_id),
+            "AGENT_INSTANCE_ID": "<unique UUID for this installation>",
+            "AGENT_TOKEN": "<rotate from Fleet after installation>",
+            "TARGET_DSN_ENV": str(host["target_dsn_env"] or "<secret environment variable>"),
+        },
+        file_instructions=file_instructions,
+        provider_instructions=provider_instructions,
+        cautions=cautions,
+    )
 
 
 # --- Endpoints ---
@@ -197,7 +375,8 @@ async def list_hosts(
     """
     rows = await db.fetch(
         "SELECT id, hostname, health_status, connection_status, "
-        "pg_version, server_role, database_name, last_heartbeat "
+        "pg_version, server_role, database_name, last_heartbeat, "
+        "agent_write_ambiguous, agent_lease_expires_at "
         "FROM hosts WHERE organization_id = $1 ORDER BY hostname",
         principal.organization_id,
     )
@@ -219,6 +398,8 @@ async def list_hosts(
                 pg_version=row["pg_version"],
                 server_role=row["server_role"],
                 last_heartbeat=row["last_heartbeat"],
+                agent_write_ambiguous=bool(row.get("agent_write_ambiguous", False)),
+                agent_lease_expires_at=row.get("agent_lease_expires_at"),
             )
         )
 
@@ -240,7 +421,8 @@ async def get_host(
     """
     row = await db.fetchrow(
         "SELECT id, hostname, health_status, connection_status, "
-        "pg_version, server_role, database_name, last_heartbeat "
+        "pg_version, server_role, database_name, last_heartbeat, "
+        "agent_write_ambiguous, agent_lease_expires_at "
         "FROM hosts WHERE id = $1 AND organization_id = $2",
         host_id,
         principal.organization_id,
@@ -263,6 +445,8 @@ async def get_host(
         pg_version=row["pg_version"],
         server_role=row["server_role"],
         last_heartbeat=row["last_heartbeat"],
+        agent_write_ambiguous=bool(row.get("agent_write_ambiguous", False)),
+        agent_lease_expires_at=row.get("agent_lease_expires_at"),
     )
 
 
@@ -424,6 +608,9 @@ async def receive_capability_report(
 ) -> CapabilityReportResponse:
     """Upsert the independent capability snapshot consumed by preflight."""
     observed_at = report.observed_at or datetime.now(timezone.utc)
+    previous = await db.fetchrow(
+        "SELECT * FROM host_capabilities WHERE host_id = $1", host_id
+    )
     row = await db.fetchrow(
         """
         INSERT INTO host_capabilities (
@@ -481,6 +668,30 @@ async def receive_capability_report(
             "UPDATE hosts SET database_name = $2, updated_at = NOW() WHERE id = $1",
             host_id,
             report.database_name,
+        )
+    capability_values = {
+        "connectivity": report.connectivity,
+        "system_information": report.system_information,
+        "system_metrics": report.system_metrics,
+        "pg_stat_statements": report.pg_stat_statements,
+        "query_text_collection": report.query_text_collection,
+        "configuration_read": report.configuration_read,
+        "configuration_write": report.configuration_write,
+        "reload_permission": report.reload_permission,
+        "restart_capability": report.restart_capability,
+        "provider_api": report.provider_api,
+        "managed_file_access": report.managed_file_access,
+    }
+    degraded = [
+        name for name, value in capability_values.items()
+        if not value and (previous is None or bool(previous.get(name)))
+    ]
+    if degraded:
+        await OperationalEventRecorder().record(
+            "AGENT_CAPABILITY_DEGRADED",
+            "Host Agent reported unavailable capabilities",
+            organization_id=row["organization_id"], host_id=host_id,
+            details={"capabilities": degraded}, connection=db,
         )
     response_data = dict(row)
     response_data["database_name"] = report.database_name
@@ -695,6 +906,13 @@ async def complete_agent_command(
                 "result_recorded": True,
             }
         raise HTTPException(status_code=409, detail="Command is already terminal")
+    if not report.succeeded:
+        await OperationalEventRecorder().record(
+            "AGENT_COMMAND_FAILED", "A Host Agent command failed",
+            host_id=host_id,
+            details={"command_id": str(command_id), "error": report.error},
+            connection=db,
+        )
     return {"id": str(row["id"]), "status": row["status"]}
 
 
@@ -705,17 +923,24 @@ async def rotate_agent_token(
     principal: Principal = Depends(require_roles("admin")),
 ) -> AgentTokenResponse:
     token = secrets.token_urlsafe(32)
-    updated = await db.fetchval(
-        """
-        UPDATE hosts
-        SET agent_token_hash = $3, updated_at = NOW()
-        WHERE id = $1 AND organization_id = $2
-        RETURNING id
-        """,
-        host_id,
-        principal.organization_id,
-        hash_token(token),
-    )
+    async with db.transaction():
+        updated = await db.fetchval(
+            """
+            UPDATE hosts
+            SET agent_token_hash = $3, agent_write_ambiguous = FALSE,
+                agent_lease_holder_id = NULL, agent_lease_expires_at = NULL,
+                updated_at = NOW()
+            WHERE id = $1 AND organization_id = $2
+            RETURNING id
+            """,
+            host_id,
+            principal.organization_id,
+            hash_token(token),
+        )
+        if updated is not None:
+            await db.execute(
+                "DELETE FROM host_agent_instances WHERE host_id = $1", host_id
+            )
     if updated is None:
         raise HTTPException(status_code=404, detail=f"Host with id '{host_id}' not found")
     return AgentTokenResponse(host_id=host_id, agent_token=token)

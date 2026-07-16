@@ -41,7 +41,14 @@ export function FleetOverview() {
     {
       key: 'hostname',
       header: 'Hostname',
-      render: (h) => <strong>{h.hostname}</strong>,
+      render: (h) => <Link to={`/fleet/${h.id}`}><strong>{h.hostname}</strong></Link>,
+    },
+    {
+      key: 'agent_write_ambiguous',
+      header: 'Agent writer',
+      render: (h) => h.agent_write_ambiguous
+        ? <strong style={{ color: '#b91c1c' }}>Blocked: duplicate agents</strong>
+        : <span style={{ color: '#15803d' }}>Single writer</span>,
     },
     {
       key: 'health_status',

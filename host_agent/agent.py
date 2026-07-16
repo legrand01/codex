@@ -14,8 +14,11 @@ and reports heartbeats at a configurable interval.
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 
 import asyncpg
 import httpx
@@ -92,6 +95,7 @@ class HostAgent:
         """
         self.config = config
         self.conn = conn
+        self.agent_instance_id = self._load_agent_instance_id()
         self._running = False
         self._tasks: List[asyncio.Task] = []
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -105,6 +109,32 @@ class HostAgent:
         # Role/version state
         self.pg_version: Optional[str] = None
         self.server_role: Optional[str] = None  # "primary" or "replica"
+
+    def _load_agent_instance_id(self) -> str:
+        """Load or atomically create the persistent identity for this installation."""
+        if self.config.agent_instance_id:
+            try:
+                return str(UUID(self.config.agent_instance_id))
+            except ValueError as exc:
+                raise RuntimeError("AGENT_INSTANCE_ID must be a UUID") from exc
+        state_dir = Path(self.config.buffer_dir).parent
+        state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        state_file = state_dir / "agent-instance-id"
+        if state_file.exists():
+            try:
+                return str(UUID(state_file.read_text(encoding="utf-8").strip()))
+            except (OSError, ValueError) as exc:
+                raise RuntimeError(f"Invalid persisted agent instance ID: {exc}") from exc
+        instance_id = str(uuid4())
+        temporary = state_file.with_name(f".{state_file.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_text(instance_id + "\n", encoding="utf-8")
+            temporary.chmod(0o600)
+            os.replace(temporary, state_file)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        return instance_id
 
     async def ensure_registered(self) -> None:
         """
@@ -694,9 +724,10 @@ class HostAgent:
                 return
 
     def _agent_headers(self) -> Dict[str, str]:
-        if not self.config.agent_token:
-            return {}
-        return {"X-Agent-Token": self.config.agent_token}
+        headers = {"X-Agent-Instance-ID": self.agent_instance_id}
+        if self.config.agent_token:
+            headers["X-Agent-Token"] = self.config.agent_token
+        return headers
 
 
 if __name__ == "__main__":

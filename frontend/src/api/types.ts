@@ -65,6 +65,8 @@ export interface HostSummary {
   pg_version: string | null;
   server_role: string | null;
   last_heartbeat: string | null;
+  agent_write_ambiguous: boolean;
+  agent_lease_expires_at: string | null;
 }
 
 export interface FleetListResponse {
@@ -429,17 +431,81 @@ export interface ConfigurationVersion {
   id: string;
   host_id: string;
   plan_id: string | null;
+  run_id: string | null;
+  database_name: string | null;
   configuration_backend: string;
-  status: 'pending' | 'applying' | 'active' | 'pending_restart' | 'rolling_back' | 'rolled_back' | 'failed';
+  status: 'pending' | 'applying' | 'active' | 'pending_restart' | 'superseded' | 'rolling_back' | 'rolled_back' | 'failed';
   managed_conf_path: string | null;
   parameters: Record<string, unknown>[];
   backend_snapshot: Record<string, unknown>;
   apply_result: Record<string, unknown> | null;
   rollback_result: Record<string, unknown> | null;
+  source_provenance: Record<string, unknown>;
+  verification_result: Record<string, unknown> | null;
+  origin_configuration_version_id: string | null;
   error: string | null;
   created_at: string;
   applied_at: string | null;
+  verified_at: string | null;
+  superseded_at: string | null;
   rolled_back_at: string | null;
+}
+
+export interface ConfigurationDifference {
+  setting_name: string;
+  left_value: string | null;
+  right_value: string | null;
+  changed: boolean;
+}
+
+export interface ConfigurationCompare {
+  left: ConfigurationVersion;
+  right: ConfigurationVersion;
+  differences: ConfigurationDifference[];
+}
+
+export interface OperationalEvent {
+  id: number;
+  host_id: string | null;
+  run_id: string | null;
+  configuration_version_id: string | null;
+  occurred_at: string;
+  severity: 'info' | 'warning' | 'error' | 'critical';
+  component: string;
+  event_code: string;
+  message: string;
+  details: Record<string, unknown>;
+  host_name: string | null;
+  run_href: string | null;
+  configuration_href: string | null;
+}
+
+export interface CapabilityDiagnostic {
+  host_id: string;
+  hostname: string;
+  database_name: string | null;
+  pg_version: string | null;
+  platform_type: string;
+  configuration_backend: string;
+  observed_at: string | null;
+  capabilities: Record<string, boolean>;
+  agent_write_ambiguous: boolean;
+  lease_holder_id: string | null;
+  lease_expires_at: string | null;
+  active_agents: Array<Record<string, unknown>>;
+}
+
+export interface SetupGuide {
+  host_id: string;
+  pg_major: number | null;
+  configuration_backend: string;
+  mode: string;
+  prerequisites: string[];
+  sql: string[];
+  agent_environment: Record<string, string>;
+  file_instructions: string[];
+  provider_instructions: string[];
+  cautions: string[];
 }
 
 export interface ReportSearchResponse {

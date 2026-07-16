@@ -22,3 +22,5 @@ class HostSummary(BaseModel):
     pg_version: Optional[str] = None
     server_role: Optional[str] = None
     last_heartbeat: Optional[datetime] = None
+    agent_write_ambiguous: bool = False
+    agent_lease_expires_at: Optional[datetime] = None

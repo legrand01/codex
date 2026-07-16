@@ -12,6 +12,8 @@ import {
   ReportsViewer,
   StartTuning,
   TuningSession,
+  Events,
+  HostDiagnostics,
 } from './pages';
 
 function App() {
@@ -76,6 +78,7 @@ function App() {
             <NavLink to="/runs" style={navLinkStyle}>Tuning</NavLink>
             <NavLink to="/plans" style={navLinkStyle}>Approvals</NavLink>
             <NavLink to="/audit" style={navLinkStyle}>Audit</NavLink>
+            <NavLink to="/events" style={navLinkStyle}>Events</NavLink>
             <button onClick={() => {
               setApiToken('');
               setAuthenticated(false);
@@ -92,6 +95,8 @@ function App() {
             <Route path="/evidence" element={<EvidenceViewer />} />
             <Route path="/rollback" element={<RollbackControls />} />
             <Route path="/audit" element={<AuditLog />} />
+            <Route path="/events" element={<Events />} />
+            <Route path="/fleet/:hostId" element={<HostDiagnostics />} />
             <Route path="/reports" element={<ReportsViewer />} />
           </Routes>
         </main>

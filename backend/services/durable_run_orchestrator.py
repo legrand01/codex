@@ -13,6 +13,7 @@ from backend.services.baseline_measurement import capture_baseline
 from backend.services.candidate_optimizer import CandidateOptimizer, evaluate_candidate
 from backend.services.configuration_backends import get_configuration_backend
 from backend.services.loop_worker import DBALoopWorker
+from backend.services.operational_events import OperationalEventRecorder
 from backend.services.parameter_catalog import refresh_parameter_dispositions
 from backend.services.plan_execution import PlanExecutionService
 from backend.services.report_generator import ReportGenerator
@@ -39,6 +40,7 @@ class DurableRunOrchestrator:
     def __init__(self, pool, *, audit_logger: Optional[AuditLogger] = None) -> None:
         self.pool = pool
         self.audit_logger = audit_logger or get_audit_logger()
+        self.events = OperationalEventRecorder(pool)
 
     async def process(self, run_id: UUID) -> RunProcessResult:
         run = await self._load_run(run_id)
@@ -104,6 +106,20 @@ class DurableRunOrchestrator:
                 "root_cause_category": root_cause,
             },
         )
+        warnings = _json(baseline.get("warnings"), [])
+        if warnings or baseline_status != "ready":
+            await self.events.record(
+                "WORKLOAD_COVERAGE_WARNING",
+                "Workload baseline coverage is insufficient or unstable",
+                host_id=host_id, run_id=run_id,
+                details={
+                    "baseline_id": str(baseline["id"]),
+                    "status": baseline_status,
+                    "coverage_pct": baseline["workload_coverage_pct"],
+                    "runtime_variance_pct": baseline["runtime_variance_pct"],
+                    "warnings": warnings,
+                },
+            )
         if baseline_status != "ready":
             action = (
                 "baseline_paused"

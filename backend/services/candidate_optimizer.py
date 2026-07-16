@@ -14,6 +14,7 @@ from uuid import UUID
 from backend.models.enums import PlanStatus
 from backend.services.audit_logger import AuditLogger, get_audit_logger
 from backend.services.baseline_measurement import build_baseline_measurement
+from backend.services.operational_events import OperationalEventRecorder
 
 DOMAIN_VERSION = "p0-bounded-v1"
 PLANNER_KIND = "candidate_optimizer"
@@ -504,15 +505,25 @@ class CandidateOptimizer:
 
     async def mark_blocked(self, plan_id: UUID, reason: str) -> None:
         async with self.pool.acquire() as conn:
-            await conn.execute(
+            row = await conn.fetchrow(
                 """
                 UPDATE tuning_candidates SET decision = 'blocked',
                     decision_reason = $2, decided_at = NOW()
                 WHERE plan_id = $1
+                RETURNING run_id, host_id, id
                 """,
                 plan_id,
                 reason,
             )
+            if row:
+                await OperationalEventRecorder(self.pool).record(
+                    "CANDIDATE_BLOCKED", "A tuning candidate was blocked",
+                    host_id=row["host_id"], run_id=row["run_id"],
+                    details={
+                        "candidate_id": str(row["id"]),
+                        "plan_id": str(plan_id), "reason": reason,
+                    }, connection=conn,
+                )
 
     async def measure_candidate(
         self,
@@ -654,6 +665,23 @@ class CandidateOptimizer:
                         candidate["run_id"],
                         decision.objective_score,
                         candidate["iteration"],
+                    )
+                event_code = {
+                    "kept": "CANDIDATE_KEPT",
+                    "rolled_back": "CANDIDATE_ROLLED_BACK",
+                    "inconclusive": "CANDIDATE_INCONCLUSIVE",
+                    "blocked": "CANDIDATE_BLOCKED",
+                }.get(decision.decision)
+                if event_code:
+                    await OperationalEventRecorder(self.pool).record(
+                        event_code,
+                        f"Tuning candidate decision: {decision.decision.replace('_', ' ')}",
+                        host_id=candidate["host_id"], run_id=candidate["run_id"],
+                        details={
+                            "candidate_id": str(candidate["id"]),
+                            "plan_id": str(candidate["plan_id"]),
+                            "reason": decision.reason,
+                        }, connection=conn,
                     )
         await self.audit_logger.log(
             run_id=candidate["run_id"],

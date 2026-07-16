@@ -69,6 +69,7 @@ async def build_tuning_preflight(
         SELECT h.id, h.hostname, h.database_name, h.environment, h.platform_type,
                h.configuration_backend, h.pg_version, h.server_role,
                h.connection_status, h.target_dsn_env, h.writes_enabled,
+               h.agent_write_ambiguous,
                h.restart_required_enabled, h.managed_conf_enrolled,
                COALESCE(c.connectivity, FALSE) AS connectivity,
                COALESCE(c.system_information, FALSE) AS system_information,
@@ -178,6 +179,14 @@ async def build_tuning_preflight(
         row["server_role"] == "primary",
         True,
         "Tuning writes are blocked unless the target is a confirmed primary.",
+    )
+    add_check(
+        "agent_lease",
+        "Single active Host Agent",
+        not bool(row.get("agent_write_ambiguous", False)),
+        True,
+        "Multiple active Host Agents share this identity; writes remain blocked "
+        "until one lease expires.",
     )
 
     backend = row["configuration_backend"]

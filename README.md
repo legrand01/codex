@@ -346,6 +346,21 @@ curl http://localhost:8000/api/v1/audit/<run-id>
 
 Every decision, approval, rejection, and system action is recorded with timestamps and actor identity.
 
+Operational events are also available as stable codes for alerting and filtering. The UI exposes
+them under **Events**, while the immutable audit log remains the compliance record.
+
+### Host Agent identity and configuration history
+
+Each agent installation must use a unique, persistent `AGENT_INSTANCE_ID` and private state
+volume. If two active instances report the same host identity, target writes are blocked until
+one lease expires. Fleet diagnostics show the active lease, independent capabilities, and
+version/backend-specific least-privilege setup instructions.
+
+Configuration versions are recorded for every backend. Operators can compare versions and
+download a redacted `.conf` export. Reapplying a rolled-back or superseded verified version
+creates a fresh workload baseline and a new pending-approval plan; it never bypasses dry-run,
+verification, measurement, or rollback guardrails.
+
 ### Step 10: Test Rollback (Optional)
 
 ```bash
@@ -429,6 +444,8 @@ Full interactive API documentation is available at `http://localhost:8000/docs` 
 | GET | `/health` | Health check |
 | GET | `/api/v1/fleet/` | List all hosts |
 | POST | `/api/v1/fleet/` | Register a host |
+| GET | `/api/v1/fleet/{id}/diagnostics` | Agent leases and independent capabilities |
+| GET | `/api/v1/fleet/{id}/setup` | Least-privilege setup guide |
 | GET | `/api/v1/runs/` | List active runs |
 | POST | `/api/v1/runs/` | Start a new DBA loop |
 | POST | `/api/v1/runs/{id}/halt` | Halt an active run |
@@ -438,6 +455,11 @@ Full interactive API documentation is available at `http://localhost:8000/docs` 
 | POST | `/api/v1/plans/{id}/reject` | Reject a plan |
 | POST | `/api/v1/rollback/{plan_id}` | Initiate rollback |
 | GET | `/api/v1/audit/{run_id}` | View audit log |
+| GET | `/api/v1/events/` | Filter coded operational events |
+| GET | `/api/v1/configurations/` | Configuration history by host/database |
+| GET | `/api/v1/configurations/compare` | Compare two configuration versions |
+| GET | `/api/v1/configurations/{id}/download` | Download a redacted configuration |
+| POST | `/api/v1/configurations/{id}/reapply` | Request guarded reapply with fresh baseline |
 | GET | `/api/v1/reports/{run_id}` | Get DBA report |
 
 ---

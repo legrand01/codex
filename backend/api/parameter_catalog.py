@@ -45,6 +45,8 @@ class ConfigurationVersionResponse(BaseModel):
     id: UUID
     host_id: UUID
     plan_id: Optional[UUID] = None
+    run_id: Optional[UUID] = None
+    database_name: Optional[str] = None
     configuration_backend: str
     status: str
     managed_conf_path: Optional[str] = None
@@ -52,9 +54,14 @@ class ConfigurationVersionResponse(BaseModel):
     backend_snapshot: Dict[str, Any]
     apply_result: Optional[Dict[str, Any]] = None
     rollback_result: Optional[Dict[str, Any]] = None
+    source_provenance: Dict[str, Any] = {}
+    verification_result: Optional[Dict[str, Any]] = None
+    origin_configuration_version_id: Optional[UUID] = None
     error: Optional[str] = None
     created_at: datetime
     applied_at: Optional[datetime] = None
+    verified_at: Optional[datetime] = None
+    superseded_at: Optional[datetime] = None
     rolled_back_at: Optional[datetime] = None
 
 
@@ -122,12 +129,14 @@ async def list_configuration_versions(
         raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
     rows = await db.fetch(
         """
-        SELECT v.id, v.host_id, v.plan_id, v.configuration_backend, v.status,
+        SELECT v.id, v.host_id, v.plan_id, v.run_id, v.database_name,
+               v.configuration_backend, v.status,
                v.managed_conf_path, v.parameters,
                (v.backend_snapshot #- '{file,bytes_b64}') AS backend_snapshot,
                (v.apply_result #- '{backend_snapshot,file,bytes_b64}') AS apply_result,
-               v.rollback_result, v.error, v.created_at,
-               v.applied_at, v.rolled_back_at
+               v.rollback_result, v.source_provenance, v.verification_result,
+               v.origin_configuration_version_id, v.error, v.created_at,
+               v.applied_at, v.verified_at, v.superseded_at, v.rolled_back_at
         FROM configuration_versions v
         JOIN plans p ON p.id = v.plan_id
         WHERE p.run_id = $1 AND v.organization_id = $2
@@ -144,6 +153,8 @@ async def list_configuration_versions(
             ("backend_snapshot", {}),
             ("apply_result", None),
             ("rollback_result", None),
+            ("source_provenance", {}),
+            ("verification_result", None),
         ):
             if isinstance(item.get(key), str):
                 item[key] = json.loads(item[key])
