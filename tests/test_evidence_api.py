@@ -21,7 +21,7 @@ from backend.api.evidence import (
     format_freshness_age,
 )
 from backend.main import app
-from backend.security import DEFAULT_ORGANIZATION_ID
+from backend.security import DEFAULT_ORGANIZATION_ID, Principal
 
 # ---------------------------------------------------------------------------
 # Unit tests for format_freshness_age
@@ -174,13 +174,16 @@ def _make_evidence_record(
 class MockConnection:
     """Mock asyncpg connection for testing."""
 
-    def __init__(self, records=None, single_record=None):
+    def __init__(self, records=None, single_record=None, rollup_records=None):
         self.records = records or []
         self.single_record = single_record
+        self.rollup_records = rollup_records or []
         self.last_fetch_args = None
 
     async def fetch(self, query, *args):
         self.last_fetch_args = args
+        if "FROM evidence_rollups" in query:
+            return self.rollup_records
         if "COUNT(*)::integer AS count" in query:
             counts = {}
             for record in self.records:
@@ -333,6 +336,188 @@ async def test_list_evidence_categories_sum_to_total():
             data = response.json()
             total_from_categories = sum(c["count"] for c in data["categories"])
             assert total_from_categories == data["total"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_list_evidence_includes_archived_rollups_when_raw_is_empty():
+    """Expired payloads remain visible as compact per-session history."""
+    run_id = uuid.uuid4()
+    rollups = [
+        MockRecord(
+            evidence_type="pg_stat_statements",
+            count=120,
+            total_bytes=4_096,
+            first_collected_at=datetime.now(timezone.utc) - timedelta(days=40),
+            last_collected_at=datetime.now(timezone.utc) - timedelta(days=31),
+        ),
+        MockRecord(
+            evidence_type="pg_stat_database",
+            count=30,
+            total_bytes=1_024,
+            first_collected_at=datetime.now(timezone.utc) - timedelta(days=40),
+            last_collected_at=datetime.now(timezone.utc) - timedelta(days=31),
+        ),
+    ]
+    mock_conn = MockConnection(records=[], rollup_records=rollups)
+    dep, override = _override_db(mock_conn)
+    app.dependency_overrides[dep] = override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(f"/api/v1/evidence/{run_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["snapshots"] == []
+        assert payload["total"] == 0
+        assert payload["archived_total"] == 150
+        assert payload["archived_bytes"] == 5_120
+        archived = payload["archived_categories"][0]
+        assert archived["category"] == "performance"
+        assert archived["count"] == 150
+        assert archived["total_bytes"] == 5_120
+        assert datetime.fromisoformat(archived["first_collected_at"].replace("Z", "+00:00")) == min(
+            row["first_collected_at"] for row in rollups
+        )
+        assert datetime.fromisoformat(archived["last_collected_at"].replace("Z", "+00:00")) == max(
+            row["last_collected_at"] for row in rollups
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _lifecycle_payload():
+    now = datetime.now(timezone.utc)
+    return {
+        "policy": {
+            "raw_retention_days": 30,
+            "referenced_retention_days": 90,
+            "rollup_retention_days": 365,
+            "batch_size": 1000,
+            "max_batches_per_run": 20,
+            "cleanup_enabled": True,
+            "cleanup_interval_seconds": 3600,
+        },
+        "cutoffs": {"raw": now, "referenced": now, "rollup": now},
+        "raw": {
+            "snapshot_count": 10,
+            "total_bytes": 1000,
+            "unmeasured_snapshot_count": 0,
+            "oldest_collected_at": now,
+            "newest_collected_at": now,
+        },
+        "eligible": {"snapshot_count": 2, "total_bytes": 200},
+        "rollups": {
+            "snapshot_count": 20,
+            "total_bytes": 2000,
+            "rollup_rows": 1,
+            "oldest_collected_at": now,
+            "newest_collected_at": now,
+        },
+        "last_run": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_status_and_preview_are_tenant_scoped(monkeypatch):
+    seen = []
+
+    class FakeLifecycleManager:
+        def __init__(self, database):
+            self.database = database
+
+        async def status(self, organization_id):
+            seen.append(organization_id)
+            return _lifecycle_payload()
+
+    monkeypatch.setattr(
+        "backend.services.evidence_lifecycle.EvidenceLifecycleManager",
+        FakeLifecycleManager,
+    )
+    mock_conn = MockConnection()
+    dep, override = _override_db(mock_conn)
+    app.dependency_overrides[dep] = override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            status_response = await client.get("/api/v1/evidence/lifecycle/status")
+            preview_response = await client.post(
+                "/api/v1/evidence/lifecycle/cleanup", json={"dry_run": True}
+            )
+        assert status_response.status_code == 200
+        assert status_response.json()["eligible"]["snapshot_count"] == 2
+        assert preview_response.status_code == 200
+        assert preview_response.json()["status"] == "preview"
+        assert seen == [DEFAULT_ORGANIZATION_ID, DEFAULT_ORGANIZATION_ID]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_cleanup_executes_with_admin_identity(monkeypatch):
+    seen = []
+
+    class FakeLifecycleManager:
+        def __init__(self, database):
+            self.database = database
+
+        async def run_cleanup(self, organization_id, **kwargs):
+            seen.append((organization_id, kwargs))
+            return {"status": "completed", "snapshots_deleted": 3}
+
+    monkeypatch.setattr(
+        "backend.services.evidence_lifecycle.EvidenceLifecycleManager",
+        FakeLifecycleManager,
+    )
+    mock_conn = MockConnection()
+    dep, override = _override_db(mock_conn)
+    app.dependency_overrides[dep] = override
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/evidence/lifecycle/cleanup",
+                json={"dry_run": False, "max_batches": 2},
+            )
+        assert response.status_code == 200
+        assert response.json()["result"]["snapshots_deleted"] == 3
+        assert seen == [
+            (
+                DEFAULT_ORGANIZATION_ID,
+                {"triggered_by": "api:development-admin", "max_batches": 2},
+            )
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_cleanup_rejects_non_admin(monkeypatch):
+    """Viewing status is broad, but raw deletion remains an admin operation."""
+    from backend.config import settings as app_settings
+
+    async def viewer_request(_request):
+        return Principal(
+            id=uuid.uuid4(),
+            organization_id=DEFAULT_ORGANIZATION_ID,
+            subject="viewer",
+            display_name="Viewer",
+            role="viewer",
+        )
+
+    monkeypatch.setattr(app_settings, "auth_required", True)
+    monkeypatch.setattr("backend.security.authenticate_request", viewer_request)
+    mock_conn = MockConnection()
+    dep, override = _override_db(mock_conn)
+    app.dependency_overrides[dep] = override
+    transport = ASGITransport(app=app)
+    try:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/evidence/lifecycle/cleanup", json={"dry_run": False}
+            )
+        assert response.status_code == 403
     finally:
         app.dependency_overrides.clear()
 

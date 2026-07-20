@@ -21,6 +21,7 @@ import type {
   EvidenceSnapshot,
   EvidenceSnapshotSummary,
   EvidenceListResponse,
+  EvidenceLifecycleStatus,
   PlanDetail,
   PlanListResponse,
   AuditEntry,
@@ -253,6 +254,9 @@ export const eventsApi = {
 
 // Evidence API
 export const evidenceApi = {
+  getLifecycleStatus(): Promise<EvidenceLifecycleStatus> {
+    return request<EvidenceLifecycleStatus>('/evidence/lifecycle/status');
+  },
   listEvidencePage(
     runId: string,
     options: { evidenceType?: string; limit?: number; offset?: number } = {},

@@ -22,6 +22,7 @@ import type {
   ConfigurationCompare,
   DBAReport,
   EvidenceListResponse,
+  EvidenceLifecycleStatus,
   EvidenceSnapshot,
   EvidenceSnapshotSummary,
   PlanDetail,
@@ -104,6 +105,10 @@ interface SessionData {
   evidence: EvidenceSnapshotSummary[];
   evidenceCategories: Array<{ category: string; count: number }>;
   evidenceTotal: number;
+  archivedEvidenceCategories: EvidenceListResponse['archived_categories'];
+  archivedEvidenceTotal: number;
+  archivedEvidenceBytes: number;
+  evidenceLifecycle: EvidenceLifecycleStatus | null;
   workloadSnapshot: EvidenceSnapshot | null;
   activity: AuditEntry[];
   operationalEvents: OperationalEvent[];
@@ -431,9 +436,21 @@ function EvidenceTab({ data }: { data: SessionData }) {
     }
     return Array.from(result.entries());
   }, [data.evidence]);
-  if (!grouped.length) return <EmptyState title="No evidence yet" description="Baseline snapshots will remain attached to this session." />;
   return <div style={{ display: 'grid', gap: '14px' }}>
-    <div style={{ ...card, display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}><div><strong>{data.evidenceTotal.toLocaleString()} retained snapshots</strong><div style={subtle}>Showing the newest {data.evidence.length}; payloads load only when requested.</div></div><div style={{ ...subtle, textAlign: 'right' }}>{data.evidenceCategories.map((item) => `${item.category}: ${item.count.toLocaleString()}`).join(' · ')}</div></div>
+    <div style={{ ...card, display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}><div><strong>{data.evidenceTotal.toLocaleString()} raw snapshots</strong><div style={subtle}>Showing the newest {data.evidence.length}; payloads load only when requested.</div></div><div style={{ ...subtle, textAlign: 'right' }}>{data.evidenceCategories.map((item) => `${item.category}: ${item.count.toLocaleString()}`).join(' · ')}</div></div>
+    {data.archivedEvidenceTotal > 0 && <div style={{ ...card, background: '#f8fafc', borderColor: '#cbd5e1' }}>
+      <strong>{data.archivedEvidenceTotal.toLocaleString()} archived snapshots</strong>
+      <div style={subtle}>{formatBytes(data.archivedEvidenceBytes)} of expired raw payloads are represented by durable daily rollups.</div>
+      <div style={{ ...subtle, marginTop: '5px' }}>{data.archivedEvidenceCategories.map((item) => `${item.category}: ${item.count.toLocaleString()}`).join(' · ')}</div>
+    </div>}
+    {data.evidenceLifecycle && <div style={{ ...card, background: data.evidenceLifecycle.last_run?.status === 'failed' ? '#fef2f2' : '#f0fdf4', borderColor: data.evidenceLifecycle.last_run?.status === 'failed' ? '#fecaca' : '#bbf7d0' }}>
+      <strong>Evidence lifecycle</strong>
+      <div style={{ ...subtle, marginTop: '4px' }}>Raw {data.evidenceLifecycle.policy.raw_retention_days} days · referenced {data.evidenceLifecycle.policy.referenced_retention_days} days · rollups {data.evidenceLifecycle.policy.rollup_retention_days} days · cleanup {data.evidenceLifecycle.policy.cleanup_enabled ? 'enabled' : 'disabled'}</div>
+      <div style={{ ...subtle, marginTop: '4px' }}>Tenant storage: {data.evidenceLifecycle.raw.snapshot_count.toLocaleString()} raw ({formatBytes(data.evidenceLifecycle.raw.total_bytes)} measured) · {data.evidenceLifecycle.eligible.snapshot_count.toLocaleString()} currently eligible · {data.evidenceLifecycle.rollups.snapshot_count.toLocaleString()} archived</div>
+      {data.evidenceLifecycle.raw.unmeasured_snapshot_count > 0 && <div style={{ ...subtle, marginTop: '4px', color: '#92400e' }}>{data.evidenceLifecycle.raw.unmeasured_snapshot_count.toLocaleString()} older snapshots are awaiting bounded size backfill.</div>}
+      {data.evidenceLifecycle.last_run && <div style={{ ...subtle, marginTop: '4px' }}>Last cleanup: {data.evidenceLifecycle.last_run.status} · {new Date(data.evidenceLifecycle.last_run.completed_at ?? data.evidenceLifecycle.last_run.started_at).toLocaleString()} · {data.evidenceLifecycle.last_run.snapshots_deleted.toLocaleString()} removed</div>}
+    </div>}
+    {!grouped.length && data.archivedEvidenceTotal === 0 && <EmptyState title="No evidence yet" description="Baseline snapshots will remain attached to this session." />}
     {grouped.map(([type, snapshots]) => <section key={type}>
       <h3 style={{ margin: '0 0 7px', textTransform: 'capitalize' }}>{type.replace(/_/g, ' ')} <span style={subtle}>({snapshots.length} recent)</span></h3>
       <div style={{ display: 'grid', gap: '6px' }}>{snapshots.map((snapshot) => <EvidenceSnapshotCard key={snapshot.id} snapshot={snapshot} />)}</div>
@@ -481,6 +498,7 @@ function SessionWorkspace() {
   const runRequest = useApi<RunDetail>(() => runsApi.getRunStatus(runId), [runId]);
   const plansRequest = useApi<PlanDetail[]>(() => plansApi.listRunPlans(runId), [runId]);
   const evidenceRequest = useApi<EvidenceListResponse>(() => evidenceApi.listEvidencePage(runId), [runId]);
+  const evidenceLifecycleRequest = useApi<EvidenceLifecycleStatus>(() => evidenceApi.getLifecycleStatus(), [runId]);
   const workloadEvidenceRequest = useApi<EvidenceSnapshot | null>(
     () => evidenceApi.getLatestSnapshot(runId, 'pg_stat_statements'),
     [runId],
@@ -514,6 +532,10 @@ function SessionWorkspace() {
     evidence: evidenceRequest.data?.snapshots ?? [],
     evidenceCategories: evidenceRequest.data?.categories ?? [],
     evidenceTotal: evidenceRequest.data?.total ?? 0,
+    archivedEvidenceCategories: evidenceRequest.data?.archived_categories ?? [],
+    archivedEvidenceTotal: evidenceRequest.data?.archived_total ?? 0,
+    archivedEvidenceBytes: evidenceRequest.data?.archived_bytes ?? 0,
+    evidenceLifecycle: evidenceLifecycleRequest.data,
     workloadSnapshot: workloadEvidenceRequest.data,
     activity: activityRequest.data ?? [],
     operationalEvents: operationalEventsRequest.data ?? [],
@@ -524,7 +546,7 @@ function SessionWorkspace() {
     refreshConfigurationVersions: configurationVersionsRequest.refetch,
     refreshRun: runRequest.refetch,
   };
-  const secondaryLoading = plansRequest.loading || evidenceRequest.loading || activityRequest.loading || parameterDispositionsRequest.loading || configurationVersionsRequest.loading || (tab === 'workload' && workloadEvidenceRequest.loading);
+  const secondaryLoading = plansRequest.loading || evidenceRequest.loading || (tab === 'evidence' && evidenceLifecycleRequest.loading) || activityRequest.loading || parameterDispositionsRequest.loading || configurationVersionsRequest.loading || (tab === 'workload' && workloadEvidenceRequest.loading);
 
   return <div>
     <Link to="/runs" style={{ color: '#2563eb', fontSize: '0.85rem' }}>← Tuning sessions</Link>
@@ -543,7 +565,7 @@ function SessionWorkspace() {
       </div>
     </header>
     <nav aria-label="Tuning session sections" style={{ display: 'flex', gap: '3px', overflowX: 'auto', borderBottom: '1px solid #d1d5db', marginBottom: '18px' }}>
-      {tabs.map((item) => <button key={item.id} onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined} style={{ padding: '10px 13px', border: 0, borderBottom: tab === item.id ? '3px solid #2563eb' : '3px solid transparent', background: 'transparent', color: tab === item.id ? '#1d4ed8' : '#4b5563', fontWeight: tab === item.id ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap' }}>{item.label}{item.id === 'plans' && data.plans.length ? ` (${data.plans.length})` : ''}{item.id === 'evidence' && data.evidenceTotal ? ` (${data.evidenceTotal.toLocaleString()})` : ''}</button>)}
+      {tabs.map((item) => <button key={item.id} onClick={() => selectTab(item.id)} aria-current={tab === item.id ? 'page' : undefined} style={{ padding: '10px 13px', border: 0, borderBottom: tab === item.id ? '3px solid #2563eb' : '3px solid transparent', background: 'transparent', color: tab === item.id ? '#1d4ed8' : '#4b5563', fontWeight: tab === item.id ? 600 : 400, cursor: 'pointer', whiteSpace: 'nowrap' }}>{item.label}{item.id === 'plans' && data.plans.length ? ` (${data.plans.length})` : ''}{item.id === 'evidence' && data.evidenceTotal + data.archivedEvidenceTotal ? ` (${(data.evidenceTotal + data.archivedEvidenceTotal).toLocaleString()})` : ''}</button>)}
     </nav>
     {secondaryLoading && tab !== 'overview' ? <LoadingSpinner message={`Loading ${tab}...`} /> : <>
       {tab === 'overview' && <OverviewTab data={data} />}

@@ -735,6 +735,34 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
   - Verify both AlterSystemBackend and ManagedConfFileBackend apply/rollback paths
   - Confirm completed sessions remain visible and no normal workflow requires pasted UUIDs
 
+- [x] 27. Evidence lifecycle and aggregate history
+
+  - [x] 27.1 Add retention schema and policy
+    - Add tenant-scoped evidence rollups and durable maintenance-run history
+    - Configure ordinary raw, referenced raw, and rollup retention windows
+    - _Requirements: 21.1, 21.3, 21.7_
+
+  - [x] 27.2 Implement bounded cleanup and scheduled maintenance
+    - Preserve active-run and referenced evidence
+    - Roll up and delete each bounded batch atomically under a tenant advisory lock
+    - Expire old rollups and emit coded lifecycle events
+    - _Requirements: 21.2, 21.3, 21.4, 21.7_
+
+  - [x] 27.3 Add lifecycle API and operator controls
+    - Add tenant-scoped status and preview endpoints
+    - Require admin role for cleanup execution and provide a preview-first CLI
+    - _Requirements: 21.6_
+
+  - [x] 27.4 Display raw and archived evidence lifecycle in the session workspace
+    - Show archived per-session counts and global retention status without raw payload expansion
+    - _Requirements: 21.5, 21.6_
+
+  - [x] 27.5 Verify evidence lifecycle safety
+    - Test active and referenced preservation, rollup-before-delete atomicity,
+      tenant isolation, bounded batches, scheduled execution, migration, API,
+      and frontend build
+    - _Requirements: 21.1-21.7_
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for faster MVP

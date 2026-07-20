@@ -328,6 +328,55 @@ export interface EvidenceListResponse {
   total: number;
   limit: number;
   offset: number;
+  archived_categories: EvidenceArchivedCategory[];
+  archived_total: number;
+  archived_bytes: number;
+}
+
+export interface EvidenceArchivedCategory {
+  category: string;
+  count: number;
+  total_bytes: number;
+  first_collected_at: string | null;
+  last_collected_at: string | null;
+}
+
+export interface EvidenceLifecycleStatus {
+  policy: {
+    raw_retention_days: number;
+    referenced_retention_days: number;
+    rollup_retention_days: number;
+    batch_size: number;
+    max_batches_per_run: number;
+    cleanup_enabled: boolean;
+    cleanup_interval_seconds: number;
+  };
+  cutoffs: { raw: string; referenced: string; rollup: string };
+  raw: {
+    snapshot_count: number;
+    total_bytes: number;
+    unmeasured_snapshot_count: number;
+    oldest_collected_at: string | null;
+    newest_collected_at: string | null;
+  };
+  eligible: { snapshot_count: number; total_bytes: number };
+  rollups: {
+    snapshot_count: number;
+    total_bytes: number;
+    rollup_rows: number;
+    oldest_collected_at: string | null;
+    newest_collected_at: string | null;
+  };
+  last_run: null | {
+    id: string;
+    status: string;
+    triggered_by: string;
+    snapshots_deleted: number;
+    raw_bytes_reclaimed: number;
+    started_at: string;
+    completed_at: string | null;
+    error_message: string | null;
+  };
 }
 
 export interface EvidenceCategory {

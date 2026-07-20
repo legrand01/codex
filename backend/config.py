@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     verification_window_sec: int = 60
     degradation_threshold_pct: float = 10.0
 
+    # Evidence lifecycle. Referenced snapshots outlive ordinary raw evidence;
+    # compact rollups remain available after raw payload removal.
+    evidence_cleanup_enabled: bool = True
+    evidence_raw_retention_days: int = 30
+    evidence_referenced_retention_days: int = 90
+    evidence_rollup_retention_days: int = 365
+    evidence_cleanup_interval_seconds: int = 3600
+    evidence_cleanup_batch_size: int = 1000
+    evidence_cleanup_max_batches: int = 20
+
     # Host Agent defaults
     pg_settings_interval_sec: int = 60
     pg_stats_interval_sec: int = 30

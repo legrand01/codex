@@ -1288,6 +1288,27 @@ snapshot.
 write operations SHALL be blocked until exactly one lease remains active and a
 resolution event has been recorded.
 
+### Property 43: Active and Referenced Evidence Preservation
+
+*For any* Evidence snapshot attached to a non-terminal Tuning_Session, cleanup
+SHALL retain the raw snapshot regardless of age. For a terminal or unattached
+snapshot referenced by a Plan, baseline, advisory, candidate, or
+Workload_Fingerprint, cleanup SHALL retain it until the referenced retention
+cutoff.
+
+### Property 44: Rollup-Before-Delete Atomicity
+
+*For every* raw Evidence snapshot removed by lifecycle maintenance, exactly one
+matching tenant/host/run/type/day rollup SHALL account for its snapshot count,
+byte size, collection time, and optional quality score. A transaction failure
+SHALL preserve both the prior rollup values and all selected raw snapshots.
+
+### Property 45: Evidence Lifecycle Tenant Isolation
+
+*For any* lifecycle status, preview, or cleanup request, counts, rollups, raw
+rows, and maintenance history SHALL be limited to the authenticated
+organization, and manual deletion SHALL require an admin principal.
+
 **Validates: Requirements 14.4**
 
 ## Error Handling
@@ -1311,6 +1332,7 @@ resolution event has been recorded.
 | Managed File Validation Failure | Preserve active file, record pg_file_settings errors, reject apply | Invalid value or syntax in rendered candidate file |
 | Reload Verification Failure | Atomically restore previous version, reload, verify rollback, block session | pg_reload_conf() false or pg_settings source/value mismatch |
 | Duplicate Host Agents | Block all target writes and emit coded event until one lease remains | Two agent processes report the same host identity |
+| Evidence Maintenance Failure | Roll back the current batch, retain raw evidence, record a failed maintenance result, and retry on the next interval | Rollup insert or raw snapshot delete fails |
 
 ### Retry Policies
 

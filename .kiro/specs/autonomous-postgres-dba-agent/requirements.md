@@ -305,3 +305,17 @@ The Autonomous Postgres DBA Agent Platform enables database administrators to ru
 5. THE platform SHALL detect simultaneous active Host_Agents for the same host identity, emit a coded event, block ambiguous write execution, and identify when the duplicate-agent condition is resolved
 6. THE Control_Plane SHALL provide filterable Event history by time range, severity, event code, host, session, component, and free-text search, with direct links from events to the affected Tuning_Session or configuration version
 7. Agent failures, candidate decisions, approvals, applies, reloads, restarts, rollbacks, precedence conflicts, workload coverage warnings, and report generation outcomes SHALL emit structured event codes in addition to append-only Audit_Log entries
+
+### Requirement 21: Evidence Lifecycle and Aggregate History
+
+**User Story:** As a platform operator, I want raw evidence bounded without losing historical proof, so that long-running agents cannot grow the control-plane database indefinitely.
+
+#### Acceptance Criteria
+
+1. THE Control_Plane SHALL apply separately configurable retention windows to ordinary raw Evidence, Evidence referenced by durable Plans, baselines, advisories, candidates, or Workload_Fingerprints, and compact Evidence rollups; the referenced window SHALL NOT be shorter than the raw window and the rollup window SHALL NOT be shorter than the referenced window
+2. THE cleanup worker SHALL preserve all Evidence attached to a non-terminal Tuning_Session regardless of age and SHALL preserve referenced Evidence until the configured referenced retention window expires
+3. BEFORE deleting an eligible raw Evidence snapshot, THE cleanup worker SHALL write or update a tenant-, host-, run-, Evidence-type-, and UTC-day-scoped rollup containing snapshot count, raw byte count, first and last collection times, and available quality-score statistics in the same database transaction
+4. THE cleanup worker SHALL process at most the configured batch count and batch size per maintenance run, SHALL use a per-tenant single-writer lock, and SHALL leave both the raw rows and rollups unchanged if any batch fails
+5. THE Control_Plane SHALL retain compact rollups after raw payload expiry and SHALL show the archived snapshot count and byte total in the selected Tuning_Session Evidence view
+6. THE Control_Plane SHALL provide tenant-scoped lifecycle status showing policy windows, raw footprint, currently eligible footprint, aggregate history, and the last maintenance result; manual cleanup SHALL require the admin role and SHALL default to preview-only
+7. EACH scheduled or manually executed cleanup SHALL record a durable maintenance result and emit a structured success or failure event without exposing raw Evidence payloads

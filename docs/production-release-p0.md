@@ -18,6 +18,10 @@ AGENT_AUTH_REQUIRED=true
 BOOTSTRAP_ADMIN_TOKEN=<at least 32 random characters; remove after provisioning>
 DATABASE_URL=<TLS control-plane PostgreSQL DSN>
 REDIS_URL=<authenticated/TLS Redis URL>
+EVIDENCE_CLEANUP_ENABLED=true
+EVIDENCE_RAW_RETENTION_DAYS=30
+EVIDENCE_REFERENCED_RETENTION_DAYS=90
+EVIDENCE_ROLLUP_RETENTION_DAYS=365
 WRITE_EXECUTION_ENABLED=false
 PRODUCTION_WRITE_ENABLED=false
 PRODUCTION_WRITE_CONFIRMATION=
@@ -121,3 +125,31 @@ retries an untouched operation, or rolls back a partial state.
 - Preserve `audit_log`, `write_operations`, `run_jobs`, the run report, and agent
   buffered evidence for incident review.
 - Turn both global write switches off before investigating unexpected behavior.
+
+## 6. Evidence lifecycle operations
+
+Raw evidence is retained for 30 days by default. Snapshots referenced by plans,
+baselines, advisories, candidates, or workload fingerprints remain raw for 90
+days, matching the report window. Before cleanup removes an eligible payload it
+writes a tenant/host/run/type/day rollup in the same transaction. Rollups remain
+for 365 days by default.
+
+Preview the exact eligible footprint before manual maintenance:
+
+```bash
+venv/bin/python scripts/evidence_maintenance.py
+```
+
+Execute bounded cleanup only after reviewing the preview:
+
+```bash
+venv/bin/python scripts/evidence_maintenance.py --execute
+```
+
+The worker performs the same tenant-scoped cleanup every
+`EVIDENCE_CLEANUP_INTERVAL_SECONDS`. Concurrent jobs for one tenant are rejected
+by an advisory lock. Monitor `EVIDENCE_RETENTION_COMPLETED` and
+`EVIDENCE_RETENTION_FAILED` events and the Evidence tab lifecycle panel. A failed
+batch rolls back both its rollup writes and raw deletions. Upgraded deployments
+backfill persisted payload sizes in bounded batches; the lifecycle panel reports
+how many older snapshots remain unmeasured while this completes.

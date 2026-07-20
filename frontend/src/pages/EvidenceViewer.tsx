@@ -114,14 +114,14 @@ export function EvidenceViewer() {
       {loading && <LoadingSpinner message="Loading evidence..." />}
       {error && <div style={{ color: '#dc2626', padding: '16px' }}>Error: {error}</div>}
 
-      {!loading && !error && searchRunId && evidence.length === 0 && (
+      {!loading && !error && searchRunId && evidence.length === 0 && (evidencePage?.archived_total ?? 0) === 0 && (
         <EmptyState
           title="No Evidence Collected"
           description="No evidence has been collected yet for the selected run."
         />
       )}
 
-      {categories.length > 0 && (
+      {(categories.length > 0 || (evidencePage?.archived_total ?? 0) > 0) && (
         <div>
           {/* Category summary */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '24px' }}>
@@ -146,6 +146,18 @@ export function EvidenceViewer() {
               </div>
             ))}
           </div>
+
+          {(evidencePage?.archived_total ?? 0) > 0 && (
+            <div style={{ padding: '12px 16px', marginBottom: '18px', border: '1px solid #cbd5e1', borderRadius: '8px', background: '#f8fafc' }}>
+              <strong>{evidencePage?.archived_total.toLocaleString()} archived snapshots</strong>
+              <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '4px' }}>
+                Expired raw payloads are represented by compact daily rollups ({((evidencePage?.archived_bytes ?? 0) / 1024 / 1024).toFixed(1)} MB originally).
+              </div>
+              <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>
+                {(evidencePage?.archived_categories ?? []).map((item) => `${item.category}: ${item.count.toLocaleString()}`).join(' · ')}
+              </div>
+            </div>
+          )}
 
           {evidencePage && evidencePage.total > evidence.length && <div style={{ color: '#6b7280', fontSize: '0.8rem', marginBottom: '16px' }}>Showing the newest {evidence.length} of {evidencePage.total.toLocaleString()} snapshots.</div>}
 

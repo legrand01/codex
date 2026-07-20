@@ -13,7 +13,7 @@ Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -78,6 +78,16 @@ class CategorySummary(BaseModel):
     count: int
 
 
+class ArchivedCategorySummary(BaseModel):
+    """Compact history retained after raw payloads expire."""
+
+    category: str
+    count: int
+    total_bytes: int
+    first_collected_at: Optional[datetime] = None
+    last_collected_at: Optional[datetime] = None
+
+
 class EvidenceListResponse(BaseModel):
     """Response model for evidence listing by run."""
 
@@ -87,6 +97,9 @@ class EvidenceListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    archived_categories: List[ArchivedCategorySummary] = Field(default_factory=list)
+    archived_total: int = 0
+    archived_bytes: int = 0
 
 
 class EvidenceEmptyResponse(BaseModel):
@@ -97,6 +110,31 @@ class EvidenceEmptyResponse(BaseModel):
     categories: List[CategorySummary] = Field(default_factory=list)
     total: int = 0
     message: str = "No evidence has been collected yet for the selected run"
+
+
+class EvidenceCleanupRequest(BaseModel):
+    """Bounded manual maintenance request; preview is the safe default."""
+
+    dry_run: bool = True
+    max_batches: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class EvidenceLifecycleResponse(BaseModel):
+    """Tenant-scoped evidence storage and retention status."""
+
+    policy: Dict[str, Any]
+    cutoffs: Dict[str, datetime]
+    raw: Dict[str, Any]
+    eligible: Dict[str, int]
+    rollups: Dict[str, Any]
+    last_run: Optional[Dict[str, Any]] = None
+
+
+class EvidenceCleanupResponse(BaseModel):
+    dry_run: bool
+    status: str
+    lifecycle: Optional[EvidenceLifecycleResponse] = None
+    result: Optional[Dict[str, Any]] = None
 
 
 MAX_INLINE_EVIDENCE_BYTES = 256_000
@@ -204,6 +242,49 @@ def _bounded_snapshot_data(data: dict, data_size_bytes: int) -> tuple[dict, bool
 # --- Endpoints ---
 
 
+@router.get("/lifecycle/status", response_model=EvidenceLifecycleResponse)
+async def get_evidence_lifecycle_status(
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("viewer", "operator", "approver", "admin")),
+) -> EvidenceLifecycleResponse:
+    """Return this tenant's raw, eligible, and archived evidence footprint."""
+    from backend.services.evidence_lifecycle import EvidenceLifecycleManager
+
+    payload = await EvidenceLifecycleManager(db).status(principal.organization_id)
+    return EvidenceLifecycleResponse(**payload)
+
+
+@router.post("/lifecycle/cleanup", response_model=EvidenceCleanupResponse)
+async def run_evidence_cleanup(
+    request: EvidenceCleanupRequest,
+    db=Depends(get_db),
+    principal: Principal = Depends(require_roles("admin")),
+) -> EvidenceCleanupResponse:
+    """Preview or execute bounded cleanup for the authenticated tenant."""
+    from backend.services.evidence_lifecycle import EvidenceLifecycleManager
+
+    manager = EvidenceLifecycleManager(db)
+    if request.dry_run:
+        lifecycle = EvidenceLifecycleResponse(
+            **(await manager.status(principal.organization_id))
+        )
+        return EvidenceCleanupResponse(
+            dry_run=True,
+            status="preview",
+            lifecycle=lifecycle,
+        )
+    result = await manager.run_cleanup(
+        principal.organization_id,
+        triggered_by=f"api:{principal.subject}",
+        max_batches=request.max_batches,
+    )
+    return EvidenceCleanupResponse(
+        dry_run=False,
+        status=str(result["status"]),
+        result=result,
+    )
+
+
 @router.get("/snapshot/{snapshot_id}", response_model=EvidenceSnapshotResponse)
 async def get_evidence_snapshot(
     snapshot_id: UUID,
@@ -220,7 +301,8 @@ async def get_evidence_snapshot(
     """
     row = await db.fetchrow(
         "SELECT e.id, e.run_id, e.host_id, e.evidence_type, e.collected_at, e.data, "
-        "e.quality_score, octet_length(e.data::text) AS data_size_bytes "
+        "e.quality_score, COALESCE(e.data_size_bytes, octet_length(e.data::text)) "
+        "AS data_size_bytes "
         "FROM evidence_snapshots e JOIN hosts h ON h.id = e.host_id "
         "WHERE e.id = $1 AND h.organization_id = $2",
         snapshot_id,
@@ -282,29 +364,38 @@ async def list_evidence_by_run(
     )
 
     total = sum(int(row["count"]) for row in category_rows)
-
-    if total == 0:
-        return EvidenceListResponse(
-            run_id=run_id,
-            snapshots=[],
-            categories=[],
-            total=0,
-            limit=limit,
-            offset=offset,
+    rows = []
+    if total:
+        rows = await db.fetch(
+            "SELECT e.id, e.run_id, e.host_id, e.evidence_type, e.collected_at, "
+            "e.quality_score, COALESCE(e.data_size_bytes, octet_length(e.data::text)) "
+            "AS data_size_bytes "
+            "FROM evidence_snapshots e JOIN loop_runs r ON r.id = e.run_id "
+            "WHERE e.run_id = $1 AND r.organization_id = $2 "
+            "AND ($3::text IS NULL OR e.evidence_type = $3) "
+            "ORDER BY e.collected_at DESC, e.id DESC LIMIT $4 OFFSET $5",
+            run_id,
+            principal.organization_id,
+            evidence_type,
+            limit,
+            offset,
         )
 
-    rows = await db.fetch(
-        "SELECT e.id, e.run_id, e.host_id, e.evidence_type, e.collected_at, "
-        "e.quality_score, octet_length(e.data::text) AS data_size_bytes "
-        "FROM evidence_snapshots e JOIN loop_runs r ON r.id = e.run_id "
-        "WHERE e.run_id = $1 AND r.organization_id = $2 "
-        "AND ($3::text IS NULL OR e.evidence_type = $3) "
-        "ORDER BY e.collected_at DESC, e.id DESC LIMIT $4 OFFSET $5",
+    rollup_rows = await db.fetch(
+        """
+        SELECT evidence_type, SUM(snapshot_count)::bigint AS count,
+               SUM(total_bytes)::bigint AS total_bytes,
+               MIN(first_collected_at) AS first_collected_at,
+               MAX(last_collected_at) AS last_collected_at
+        FROM evidence_rollups
+        WHERE run_id = $1 AND organization_id = $2
+          AND ($3::text IS NULL OR evidence_type = $3)
+        GROUP BY evidence_type
+        ORDER BY evidence_type
+        """,
         run_id,
         principal.organization_id,
         evidence_type,
-        limit,
-        offset,
     )
 
     # Build snapshot list with freshness age
@@ -335,6 +426,36 @@ async def list_evidence_by_run(
         CategorySummary(category=cat, count=count)
         for cat, count in sorted(category_counts.items())
     ]
+    archived_by_category: Dict[str, Dict[str, Any]] = {}
+    for row in rollup_rows:
+        category = categorize_evidence_type(row["evidence_type"])
+        current = archived_by_category.setdefault(
+            category,
+            {
+                "count": 0,
+                "total_bytes": 0,
+                "first_collected_at": None,
+                "last_collected_at": None,
+            },
+        )
+        current["count"] += int(row["count"])
+        current["total_bytes"] += int(row["total_bytes"])
+        first = row["first_collected_at"]
+        last = row["last_collected_at"]
+        if first is not None and (
+            current["first_collected_at"] is None or first < current["first_collected_at"]
+        ):
+            current["first_collected_at"] = first
+        if last is not None and (
+            current["last_collected_at"] is None or last > current["last_collected_at"]
+        ):
+            current["last_collected_at"] = last
+    archived_categories = [
+        ArchivedCategorySummary(category=category, **values)
+        for category, values in sorted(archived_by_category.items())
+    ]
+    archived_total = sum(category.count for category in archived_categories)
+    archived_bytes = sum(category.total_bytes for category in archived_categories)
 
     return EvidenceListResponse(
         run_id=run_id,
@@ -343,4 +464,7 @@ async def list_evidence_by_run(
         total=total,
         limit=limit,
         offset=offset,
+        archived_categories=archived_categories,
+        archived_total=archived_total,
+        archived_bytes=archived_bytes,
     )

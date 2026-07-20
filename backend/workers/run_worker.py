@@ -5,8 +5,10 @@ import logging
 import os
 import socket
 
+from backend.config import settings
 from backend.db.pool import close_pool, create_pool, get_pool
 from backend.services.durable_run_orchestrator import DurableRunOrchestrator
+from backend.services.evidence_lifecycle import EvidenceLifecycleManager
 from backend.services.run_queue import ClaimedRunJob, RunQueue
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,32 @@ async def _heartbeat(queue: RunQueue, job: ClaimedRunJob) -> None:
             raise RuntimeError(f"Lost lease for run job {job.job_id}")
 
 
+async def _evidence_maintenance(pool) -> None:
+    """Run bounded tenant-scoped evidence maintenance on a fixed cadence."""
+    manager = EvidenceLifecycleManager(pool)
+    while True:
+        try:
+            for organization_id in await manager.list_organizations():
+                result = await manager.run_cleanup(
+                    organization_id,
+                    triggered_by="worker:scheduler",
+                )
+                logger.info(
+                    "Evidence maintenance organization=%s status=%s deleted=%s bytes=%s",
+                    organization_id,
+                    result["status"],
+                    result.get("snapshots_deleted", 0),
+                    result.get("raw_bytes_reclaimed", 0),
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Tuning work remains available if maintenance fails. The manager
+            # records a durable failure event for the affected organization.
+            logger.exception("Scheduled evidence maintenance failed")
+        await asyncio.sleep(max(60, settings.evidence_cleanup_interval_seconds))
+
+
 async def run_forever() -> None:
     await create_pool()
     pool = get_pool()
@@ -28,6 +56,11 @@ async def run_forever() -> None:
     worker_id = f"{socket.gethostname()}:{os.getpid()}"
     queue = RunQueue(pool)
     orchestrator = DurableRunOrchestrator(pool)
+    maintenance = (
+        asyncio.create_task(_evidence_maintenance(pool))
+        if settings.evidence_cleanup_enabled
+        else None
+    )
     logger.info("Durable run worker started as %s", worker_id)
 
     try:
@@ -63,6 +96,12 @@ async def run_forever() -> None:
                 except asyncio.CancelledError:
                     pass
     finally:
+        if maintenance is not None:
+            maintenance.cancel()
+            try:
+                await maintenance
+            except asyncio.CancelledError:
+                pass
         await close_pool()
 
 

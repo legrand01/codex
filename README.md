@@ -152,6 +152,13 @@ All environment variables can be configured in a `.env` file at the project root
 | `MAX_STEPS` | Maximum steps per goal decomposition | `20` | `15` |
 | `VERIFICATION_WINDOW_SEC` | Post-apply verification window (10-600s) | `60` | `120` |
 | `DEGRADATION_THRESHOLD_PCT` | Metric degradation threshold for auto-rollback (%) | `10.0` | `5.0` |
+| `EVIDENCE_CLEANUP_ENABLED` | Run scheduled tenant evidence maintenance | `true` | `false` |
+| `EVIDENCE_RAW_RETENTION_DAYS` | Ordinary raw evidence retention | `30` | `14` |
+| `EVIDENCE_REFERENCED_RETENTION_DAYS` | Raw retention for durable references | `90` | `120` |
+| `EVIDENCE_ROLLUP_RETENTION_DAYS` | Compact aggregate history retention | `365` | `730` |
+| `EVIDENCE_CLEANUP_INTERVAL_SECONDS` | Scheduled maintenance interval | `3600` | `21600` |
+| `EVIDENCE_CLEANUP_BATCH_SIZE` | Maximum raw rows per cleanup/backfill batch | `1000` | `500` |
+| `EVIDENCE_CLEANUP_MAX_BATCHES` | Maximum deletion batches per maintenance run | `20` | `10` |
 | `PG_SETTINGS_INTERVAL_SEC` | pg_settings collection interval (10-3600s) | `60` | `120` |
 | `PG_STATS_INTERVAL_SEC` | pg_stat collection interval (5-600s) | `30` | `15` |
 | `LOCKS_REPLICATION_INTERVAL_SEC` | Locks/replication collection interval (5-300s) | `15` | `30` |
@@ -173,6 +180,7 @@ All environment variables can be configured in a `.env` file at the project root
 This executes all test categories:
 - **Guardrail Enforcement** - Allowlist validation, risk scoring, safety workflow ordering
 - **Loop Execution** - DBA loop worker, run management, post-apply verification
+- **Evidence Lifecycle** - bounded raw retention, reference protection, atomic daily rollups, and cleanup history
 - **Evidence Collection** - Host agent, evidence buffering, evidence API
 - **Plan Generation** - AI planning, plan approval, report generation
 
