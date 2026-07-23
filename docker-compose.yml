@@ -4,10 +4,10 @@ services:
       context: .
       dockerfile: docker/Dockerfile.backend
     ports:
-      - "${PORT:-8000}:8000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8000}:8000"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/dba_agent
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=${CONTROL_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/dba_agent}
+      - REDIS_URL=${CONTROL_REDIS_URL:-redis://redis:6379/0}
       - DEBUG=${DEBUG:-false}
       - DEMO_MODE=${DEMO_MODE:-false}
       - ENVIRONMENT=${ENVIRONMENT:-development}
@@ -24,12 +24,12 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 5s
       timeout: 5s
       retries: 6
@@ -45,7 +45,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.frontend
     ports:
-      - "${FRONTEND_PORT:-80}:80"
+      - "${BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-80}:80"
     depends_on:
       app:
         condition: service_healthy
@@ -63,8 +63,8 @@ services:
       dockerfile: docker/Dockerfile.backend
     command: ["python", "-m", "backend.workers.run_worker"]
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/dba_agent
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=${CONTROL_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/dba_agent}
+      - REDIS_URL=${CONTROL_REDIS_URL:-redis://redis:6379/0}
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - WRITE_EXECUTION_ENABLED=${WRITE_EXECUTION_ENABLED:-false}
       - PRODUCTION_WRITE_ENABLED=${PRODUCTION_WRITE_ENABLED:-false}
@@ -80,10 +80,22 @@ services:
       - EVIDENCE_CLEANUP_BATCH_SIZE=${EVIDENCE_CLEANUP_BATCH_SIZE:-1000}
       - EVIDENCE_CLEANUP_MAX_BATCHES=${EVIDENCE_CLEANUP_MAX_BATCHES:-20}
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import os,time; p='/tmp/dbtune-worker-health'; raise SystemExit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p)<30 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   host-agent:
@@ -125,9 +137,9 @@ services:
       - host_agent_buffer:/var/lib/dbtune-agent
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     ports:
-      - "${PG_PORT:-5432}:5432"
+      - "${BIND_ADDRESS:-127.0.0.1}:${PG_PORT:-5432}:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
@@ -143,9 +155,9 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -157,11 +169,23 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    command: ["python", "-m", "backend.db.init_db"]
+    environment:
+      - DATABASE_URL=${CONTROL_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/dba_agent}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   target-postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     profiles: ["tuning-lab"]
     ports:
-      - "${TARGET_PG_PORT:-55433}:5432"
+      - "${BIND_ADDRESS:-127.0.0.1}:${TARGET_PG_PORT:-55433}:5432"
     environment:
       - POSTGRES_USER=dbtune
       - POSTGRES_PASSWORD=dbtune-lab-only
@@ -222,7 +246,7 @@ services:
       - target_postgres_data:/var/lib/postgresql/data
 
   target-workload:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     profiles: ["tuning-lab"]
     environment:
       - PGHOST=target-postgres

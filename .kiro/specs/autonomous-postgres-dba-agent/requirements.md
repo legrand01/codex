@@ -319,3 +319,20 @@ The Autonomous Postgres DBA Agent Platform enables database administrators to ru
 5. THE Control_Plane SHALL retain compact rollups after raw payload expiry and SHALL show the archived snapshot count and byte total in the selected Tuning_Session Evidence view
 6. THE Control_Plane SHALL provide tenant-scoped lifecycle status showing policy windows, raw footprint, currently eligible footprint, aggregate history, and the last maintenance result; manual cleanup SHALL require the admin role and SHALL default to preview-only
 7. EACH scheduled or manually executed cleanup SHALL record a durable maintenance result and emit a structured success or failure event without exposing raw Evidence payloads
+
+### Requirement 22: Production Staging, Recovery, and Soak Qualification
+
+**User Story:** As a platform operator, I want a production-like staging gate with ongoing transactions, failure drills, and durable proof, so that production authorization is based on measured recoverability rather than a successful build alone.
+
+#### Acceptance Criteria
+
+1. THE staging deployment SHALL require authentication, explicit HTTPS CORS origins, non-default secrets, TLS termination, private control-plane dependencies, and disabled target write interlocks before it becomes ready
+2. THE Control_Plane SHALL expose separate process liveness and dependency readiness probes; readiness SHALL return a non-success status whenever the control PostgreSQL database or Redis is unavailable
+3. THE staging deployment SHALL expose private low-cardinality metrics and alerts for control-plane availability, database and Redis availability, expired worker leases, duplicate Host_Agents, and stale Evidence
+4. THE staging database SHALL be migrated by a successful one-shot migration job before the API or worker starts, and the worker SHALL publish an independently evaluated process heartbeat
+5. THE staging backup process SHALL create checksummed control-plane database backups on a configured interval and SHALL prove restore into a disposable database before a release candidate can pass
+6. THE soak runner SHALL maintain an append-only event stream and resumable state, SHALL run between 24 and 72 hours for release qualification, and SHALL verify ongoing target transactions and at least 99.5 percent successful readiness samples
+7. THE soak runner SHALL exercise worker restart, Redis restart, and backup/restore drills and SHALL record recovery time and outcome for each drill
+8. A short local mechanics run SHALL never be reported as production-qualified; the final decision SHALL remain pending until the full configured qualification duration and all mandatory manual drills complete
+9. THE production go/no-go review SHALL fail closed for unresolved critical alerts, ambiguous agent ownership, stale worker leases, failed rollback or restore, unverified alert delivery, placeholder secrets/TLS, or an elapsed soak shorter than 24 hours
+10. THE initial production scope SHALL remain limited to one explicitly enrolled self-managed PostgreSQL target, reload-only settings, and human approval for every candidate; provider-managed adapters and restart-context changes SHALL remain excluded until separately qualified

@@ -4,6 +4,8 @@ import asyncio
 import logging
 import os
 import socket
+import time
+from pathlib import Path
 
 from backend.config import settings
 from backend.db.pool import close_pool, create_pool, get_pool
@@ -12,6 +14,14 @@ from backend.services.evidence_lifecycle import EvidenceLifecycleManager
 from backend.services.run_queue import ClaimedRunJob, RunQueue
 
 logger = logging.getLogger(__name__)
+HEALTH_FILE = Path(os.environ.get("WORKER_HEALTH_FILE", "/tmp/dbtune-worker-health"))
+
+
+def _touch_health_file() -> None:
+    """Publish a process-local heartbeat consumed by the container probe."""
+    HEALTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    HEALTH_FILE.touch()
+    os.utime(HEALTH_FILE, (time.time(), time.time()))
 
 
 async def _heartbeat(queue: RunQueue, job: ClaimedRunJob) -> None:
@@ -65,6 +75,7 @@ async def run_forever() -> None:
 
     try:
         while True:
+            _touch_health_file()
             job = await queue.claim(worker_id)
             if job is None:
                 await asyncio.sleep(1)

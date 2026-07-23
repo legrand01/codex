@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from backend.api.audit import router as audit_router
 from backend.api.baselines import router as baselines_router
@@ -124,8 +124,40 @@ app.include_router(demo_router)
 
 @app.get("/health", tags=["health"])
 async def health_check():
-    """Health check endpoint returning HTTP 200 when the service is running."""
+    """Backward-compatible process liveness check."""
     return {"status": "healthy", "service": "autonomous-postgres-dba-agent"}
+
+
+@app.get("/health/live", tags=["health"])
+async def liveness_check():
+    """Return HTTP 200 whenever the API process can serve requests."""
+    return {"status": "alive", "service": "autonomous-postgres-dba-agent"}
+
+
+@app.get("/health/ready", tags=["health"])
+async def readiness_check():
+    """Return HTTP 503 until both durable dependencies are reachable."""
+    from backend.services.operational_health import dependency_status
+
+    result = await dependency_status()
+    return JSONResponse(
+        status_code=200 if result["status"] == "ready" else 503,
+        content=result,
+    )
+
+
+@app.get("/metrics", tags=["health"])
+async def metrics():
+    """Internal, low-cardinality Prometheus metrics.
+
+    Production ingress must not proxy this path outside the private network.
+    """
+    from backend.services.operational_health import prometheus_metrics
+
+    return PlainTextResponse(
+        await prometheus_metrics(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/", tags=["root"])

@@ -445,6 +445,15 @@ autonomous-postgres-dba-agent/
 
 Full interactive API documentation is available at `http://localhost:8000/docs` (Swagger UI) or `http://localhost:8000/redoc` (ReDoc) when the server is running.
 
+### Production staging
+
+Production target writes are not enabled by the ordinary Compose stack. Use
+[`ops/staging/README.md`](ops/staging/README.md) for TLS/secrets preflight,
+private metrics and alerts, backup/restore proof, and the resumable 24-72 hour
+qualification. The current release decision and verified mechanics checkpoint
+are recorded in
+[`docs/production-staging-status-2026-07-23.md`](docs/production-staging-status-2026-07-23.md).
+
 ### Key Endpoints
 
 | Method | Path | Description |

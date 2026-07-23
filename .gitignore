@@ -15,6 +15,10 @@ ENV/
 
 # Environment files
 .env
+.env.staging
+.staging/
+artifacts/staging-soak/
+artifacts/staging-backups/
 
 # IDE
 .vscode/

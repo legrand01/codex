@@ -763,6 +763,43 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
       and frontend build
     - _Requirements: 21.1-21.7_
 
+- [~] 28. Production staging and soak
+
+  - [x] 28.1 Implement production-like staging deployment
+    - Add migration-before-start ordering, private dependencies, TLS ingress,
+      security headers, request limits, non-root/read-only application
+      containers, required authentication, and disabled write interlocks
+    - Add a fail-closed environment preflight and ignored secret initialization
+    - _Requirements: 22.1, 22.4, 22.10_
+
+  - [x] 28.2 Add operational health, metrics, and alerts
+    - Separate liveness from PostgreSQL/Redis readiness
+    - Publish private Prometheus metrics and alert rules for dependency outage,
+      stale jobs, duplicate agents, and stale evidence
+    - Add an independent worker heartbeat health check
+    - _Requirements: 22.2, 22.3, 22.4_
+
+  - [x] 28.3 Add backup and restore proof
+    - Create periodic checksummed backups with bounded retention
+    - Restore into a disposable database and validate migrations and schema
+    - _Requirements: 22.5, 22.7_
+
+  - [x] 28.4 Add resumable soak orchestration and release gates
+    - Persist append-only samples, drill results, state, and final summary
+    - Verify ongoing transactions, readiness SLO, write interlocks, worker/Redis
+      recovery, and backup restore
+    - Prevent short mechanics runs from being classified as production GO
+    - Add CI gates for tests, lint, selected strict typing, dependency audits,
+      frontend build, Compose validation, shell parsing, and image builds
+    - _Requirements: 22.6, 22.7, 22.8, 22.9_
+
+  - [ ] 28.5 Complete production staging qualification
+    - Run the release candidate continuously for 24-72 hours
+    - Verify target-agent buffer replay, live duplicate-agent write blocking,
+      measured-regression rollback, real alert delivery, and off-host restore
+    - Review durable soak evidence and record the staffed production go/no-go
+    - _Requirements: 22.6, 22.8, 22.9, 22.10_
+
 ## Notes
 
 - Tasks marked with `*` are optional and can be skipped for faster MVP
@@ -811,7 +848,11 @@ This implementation plan breaks down the Autonomous Postgres DBA Agent Platform 
     { "id": 29, "tasks": ["22.2", "23.2", "24.2", "24.3", "25.2", "25.3"] },
     { "id": 30, "tasks": ["22.3", "23.3", "23.4", "24.4", "24.5", "25.4"] },
     { "id": 31, "tasks": ["22.4", "23.5", "24.6", "25.5"] },
-    { "id": 32, "tasks": ["26"] }
+    { "id": 32, "tasks": ["26"] },
+    { "id": 33, "tasks": ["27.1", "28.1"] },
+    { "id": 34, "tasks": ["27.2", "27.3", "28.2", "28.3"] },
+    { "id": 35, "tasks": ["27.4", "27.5", "28.4"] },
+    { "id": 36, "tasks": ["28.5"] }
   ]
 }
 ```

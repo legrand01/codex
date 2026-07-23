@@ -1,0 +1,45 @@
+groups:
+  - name: dbtune-release-gates
+    rules:
+      - alert: DBTuneControlPlaneDown
+        expr: up{job="dbtune-control-plane"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: DBTune control plane is unavailable
+      - alert: DBTuneControlDatabaseDown
+        expr: dbtune_postgres_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: DBTune control database is unavailable
+      - alert: DBTuneRedisDown
+        expr: dbtune_redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: DBTune Redis is unavailable
+      - alert: DBTuneStaleClaimedJob
+        expr: dbtune_run_jobs_stale_claimed > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: A tuning job has an expired worker lease
+      - alert: DBTuneDuplicateAgent
+        expr: dbtune_agent_duplicate_hosts > 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: Multiple active agents share a target identity; writes are blocked
+      - alert: DBTuneEvidenceStale
+        expr: dbtune_evidence_freshness_seconds > 180
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host evidence has not arrived within the staging freshness objective

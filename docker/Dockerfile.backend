@@ -1,7 +1,7 @@
 # Backend Dockerfile - Autonomous Postgres DBA Agent Platform
 # Multi-stage build for production-ready image
 
-FROM python:3.11-slim AS base
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93 AS base
 
 WORKDIR /app
 
@@ -10,9 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies first for layer caching
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir . 2>/dev/null || pip install --no-cache-dir -e .
+# Install the audited production dependency lock first for layer caching.
+COPY requirements.lock ./
+RUN pip install --no-cache-dir --requirement requirements.lock
 
 # Copy application code
 COPY backend/ ./backend/
@@ -29,7 +29,7 @@ EXPOSE 8000
 
 # Health check - must respond HTTP 200 within 30 seconds of container start
 HEALTHCHECK --interval=5s --timeout=5s --start-period=15s --retries=6 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:8000/health/ready || exit 1
 
 # Run application with production settings
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--access-log"]

@@ -19,7 +19,16 @@ AGENT_PATH = re.compile(
     r"^/api/v1/fleet/[0-9a-fA-F-]+/"
     r"(heartbeat|role|evidence|capabilities|commands(?:/[0-9a-fA-F-]+/result)?)$"
 )
-PUBLIC_PATHS = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
+PUBLIC_PATHS = {
+    "/",
+    "/health",
+    "/health/live",
+    "/health/ready",
+    "/metrics",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+}
 
 
 @dataclass(frozen=True)

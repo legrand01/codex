@@ -80,7 +80,7 @@ if command -v docker &>/dev/null; then
         # Wait for services to be healthy
         ELAPSED=0
         while [ $ELAPSED -lt $MAX_WAIT_SECONDS ]; do
-            if curl -sf "http://localhost:${DEPLOY_PORT}/health" > /dev/null 2>&1; then
+            if curl -sf "http://localhost:${DEPLOY_PORT}/health/ready" > /dev/null 2>&1; then
                 log_info "Backend is healthy!"
                 echo ""
                 log_info "============================================"
@@ -89,7 +89,7 @@ if command -v docker &>/dev/null; then
                 log_info "Backend API:     http://localhost:${DEPLOY_PORT}"
                 log_info "API Docs:        http://localhost:${DEPLOY_PORT}/docs"
                 log_info "Frontend:        http://localhost:${FRONTEND_PORT}"
-                log_info "Health Check:    http://localhost:${DEPLOY_PORT}/health"
+                log_info "Readiness Check: http://localhost:${DEPLOY_PORT}/health/ready"
                 echo ""
                 log_info "To stop: $COMPOSE_CMD down"
                 log_info "To view logs: $COMPOSE_CMD logs -f"
@@ -144,7 +144,7 @@ APP_PID=$!
 # Wait for HTTP readiness
 ELAPSED=0
 while [ $ELAPSED -lt $MAX_WAIT_SECONDS ]; do
-    if curl -sf "http://localhost:${DEPLOY_PORT}/health" > /dev/null 2>&1; then
+    if curl -sf "http://localhost:${DEPLOY_PORT}/health/ready" > /dev/null 2>&1; then
         log_info "Application is ready!"
         echo ""
         log_info "============================================"
@@ -152,7 +152,7 @@ while [ $ELAPSED -lt $MAX_WAIT_SECONDS ]; do
         log_info "============================================"
         log_info "Backend API:     http://localhost:${DEPLOY_PORT}"
         log_info "API Docs:        http://localhost:${DEPLOY_PORT}/docs"
-        log_info "Health Check:    http://localhost:${DEPLOY_PORT}/health"
+        log_info "Readiness Check: http://localhost:${DEPLOY_PORT}/health/ready"
         echo ""
         log_info "Application PID: ${APP_PID}"
         log_info "To stop: kill ${APP_PID}"
