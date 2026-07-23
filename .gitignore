@@ -19,6 +19,7 @@ ENV/
 .staging/
 artifacts/staging-soak/
 artifacts/staging-backups/
+artifacts/staging-alerts/
 
 # IDE
 .vscode/

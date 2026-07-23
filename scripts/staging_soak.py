@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import ssl
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,10 +34,21 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True) + "\n")
-        handle.flush()
+def append_jsonl(
+    path: Path,
+    payload: dict[str, Any],
+    lock: threading.Lock | None = None,
+) -> None:
+    def write() -> None:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+            handle.flush()
+
+    if lock is None:
+        write()
+    else:
+        with lock:
+            write()
 
 
 def run(command: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
@@ -114,38 +127,64 @@ def wait_for_ready(base_url: str, insecure: bool, timeout_seconds: int = 120) ->
 
 def run_drill(name: str, base_url: str, insecure: bool, output_dir: Path) -> dict[str, Any]:
     started = time.monotonic()
-    if name == "worker_restart":
-        command = COMPOSE + ["restart", "worker"]
-        result = run(command)
-        passed = result.returncode == 0 and wait_for_ready(base_url, insecure)
-        detail = (result.stdout + result.stderr).strip()
-    elif name == "redis_restart":
-        command = COMPOSE + ["restart", "redis"]
-        result = run(command)
-        passed = result.returncode == 0 and wait_for_ready(base_url, insecure)
-        detail = (result.stdout + result.stderr).strip()
-    elif name == "backup_restore":
-        result = run(
-            ["bash", "scripts/verify_staging_restore.sh", str(output_dir / "backups")],
-            timeout=300,
-        )
-        passed = result.returncode == 0
-        detail = (result.stdout + result.stderr).strip()
-    else:
-        return {
-            "kind": "drill",
-            "name": name,
-            "timestamp": utc_now(),
-            "passed": False,
-            "detail": "unknown drill",
-            "recovery_seconds": 0,
-        }
+    evidence: dict[str, Any] | None = None
+    try:
+        if name == "worker_restart":
+            command = COMPOSE + ["restart", "worker"]
+            result = run(command)
+            passed = result.returncode == 0 and wait_for_ready(base_url, insecure)
+            detail = (result.stdout + result.stderr).strip()
+        elif name == "redis_restart":
+            command = COMPOSE + ["restart", "redis"]
+            result = run(command)
+            passed = result.returncode == 0 and wait_for_ready(base_url, insecure)
+            detail = (result.stdout + result.stderr).strip()
+        elif name in {"agent_buffer_replay", "duplicate_agent"}:
+            result = run(
+                [
+                    "venv/bin/python",
+                    "scripts/staging_drills.py",
+                    name,
+                    "--base-url",
+                    base_url,
+                ],
+                timeout=300,
+            )
+            passed = result.returncode == 0
+            detail = (result.stdout + result.stderr).strip()
+            if passed:
+                evidence = json.loads(result.stdout)
+                passed = evidence.get("passed") is True
+        elif name == "regression_rollback":
+            result = run(
+                ["venv/bin/python", "scripts/drill_regression_rollback.py"],
+                timeout=600,
+            )
+            passed = result.returncode == 0
+            detail = (result.stdout + result.stderr).strip()
+            if passed:
+                evidence = json.loads(result.stdout)
+                passed = evidence.get("passed") is True
+        elif name == "backup_restore":
+            result = run(
+                ["bash", "scripts/verify_staging_restore.sh", str(output_dir / "backups")],
+                timeout=300,
+            )
+            passed = result.returncode == 0
+            detail = (result.stdout + result.stderr).strip()
+        else:
+            passed = False
+            detail = "unknown drill"
+    except Exception as exc:
+        passed = False
+        detail = f"{type(exc).__name__}: {exc}"
     return {
         "kind": "drill",
         "name": name,
         "timestamp": utc_now(),
         "passed": passed,
         "detail": detail[-2000:],
+        "evidence": evidence,
         "recovery_seconds": round(time.monotonic() - started, 3),
     }
 
@@ -156,6 +195,13 @@ class SoakState:
     requested_duration_seconds: float
     baseline_transactions: int | None
     completed_drills: list[str]
+    samples_total: int = 0
+    ready_samples: int = 0
+    max_transactions: int | None = None
+    drill_results: dict[str, dict[str, Any]] = field(default_factory=dict)
+    last_sample_at: str | None = None
+    last_sample_epoch: float | None = None
+    max_sample_gap_seconds: float = 0.0
 
     @classmethod
     def load_or_create(
@@ -166,18 +212,70 @@ class SoakState:
     ) -> "SoakState":
         if resume and path.exists():
             payload = json.loads(path.read_text(encoding="utf-8"))
-            return cls(**payload)
-        return cls(time.time(), duration_seconds, target_transaction_count(), [])
+            if "drill_results" not in payload:
+                # Task 28 state written before cumulative drill outcomes were
+                # durable cannot prove those drills; schedule them again.
+                payload["completed_drills"] = []
+            allowed = cls.__dataclass_fields__
+            return cls(**{key: value for key, value in payload.items() if key in allowed})
+        baseline = target_transaction_count()
+        return cls(
+            time.time(),
+            duration_seconds,
+            baseline,
+            [],
+            max_transactions=baseline,
+        )
 
     def save(self, path: Path) -> None:
-        path.write_text(json.dumps(self.__dict__, indent=2, sort_keys=True), encoding="utf-8")
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(asdict(self), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
 
 
-def classify_decision(mechanics_passed: bool, qualification_complete: bool) -> str:
+EXTERNAL_GATES = {
+    "real_tls",
+    "external_alert_delivery",
+    "independent_off_host_restore",
+    "staffed_go_no_go",
+}
+
+
+def sampling_coverage(
+    samples_total: int,
+    observation_seconds: float,
+    interval_seconds: float,
+) -> tuple[int, float]:
+    expected = max(1, math.ceil(max(0.0, observation_seconds) / interval_seconds))
+    return expected, min(1.0, samples_total / expected)
+
+
+def external_gates(path: Path | None) -> tuple[bool, dict[str, Any]]:
+    if path is None or not path.exists():
+        return False, {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    complete = all(
+        payload.get(gate, {}).get("verified") is True
+        and bool(payload.get(gate, {}).get("evidence"))
+        for gate in EXTERNAL_GATES
+    )
+    return complete, payload
+
+
+def classify_decision(
+    mechanics_passed: bool,
+    qualification_complete: bool,
+    external_gates_complete: bool,
+) -> str:
     if not mechanics_passed:
         return "NO_GO"
     if not qualification_complete:
         return "PENDING_QUALIFICATION"
+    if not external_gates_complete:
+        return "PENDING_EXTERNAL_GATES"
     return "GO"
 
 
@@ -189,9 +287,13 @@ def main() -> None:
     parser.add_argument("--insecure", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--external-evidence", type=Path)
     parser.add_argument(
         "--drills",
-        default="worker_restart,redis_restart,backup_restore",
+        default=(
+            "worker_restart,redis_restart,agent_buffer_replay,"
+            "duplicate_agent,regression_rollback,backup_restore"
+        ),
         help="Comma-separated drills; use an empty value to disable.",
     )
     parser.add_argument(
@@ -212,7 +314,11 @@ def main() -> None:
     summary_path = args.output_dir / "summary.json"
     duration_seconds = args.duration_hours * 3600
     state = SoakState.load_or_create(state_path, duration_seconds, args.resume)
+    if args.resume and abs(state.requested_duration_seconds - duration_seconds) > 1:
+        raise SystemExit("resume duration differs from the persisted soak duration")
     state.save(state_path)
+    state_lock = threading.Lock()
+    event_lock = threading.Lock()
 
     interlocks_ok, interlock_detail = write_interlocks_disabled()
     append_jsonl(
@@ -223,6 +329,7 @@ def main() -> None:
             "write_interlocks_disabled": interlocks_ok,
             "detail": interlock_detail,
         },
+        event_lock,
     )
     if not interlocks_ok:
         raise SystemExit("staging soak refused: worker write interlocks are not all disabled")
@@ -232,14 +339,15 @@ def main() -> None:
         name: (index + 1) / (len(drills) + 1)
         for index, name in enumerate(drills)
     }
-    samples: list[dict[str, Any]] = []
-    drill_results: list[dict[str, Any]] = []
     interrupted = False
-    try:
-        while True:
+    stop_sampler = threading.Event()
+
+    def sample_until_stopped() -> None:
+        next_sample_epoch = time.time()
+        while not stop_sampler.is_set():
             elapsed = time.time() - state.started_at_epoch
             if elapsed >= state.requested_duration_seconds:
-                break
+                return
             status, readiness = request_json(
                 f"{args.base_url}/health/ready",
                 args.insecure,
@@ -253,43 +361,106 @@ def main() -> None:
                 "readiness": readiness,
                 "target_transactions": transactions,
             }
-            samples.append(sample)
-            append_jsonl(events_path, sample)
+            append_jsonl(events_path, sample, event_lock)
+            with state_lock:
+                state.samples_total += 1
+                if sample["ready"]:
+                    state.ready_samples += 1
+                if transactions is not None:
+                    state.max_transactions = max(
+                        transactions,
+                        state.max_transactions
+                        if state.max_transactions is not None
+                        else transactions,
+                    )
+                sample_epoch = time.time()
+                previous_sample_epoch = (
+                    state.last_sample_epoch
+                    if state.last_sample_epoch is not None
+                    else state.started_at_epoch
+                )
+                state.max_sample_gap_seconds = max(
+                    state.max_sample_gap_seconds,
+                    max(0.0, sample_epoch - previous_sample_epoch),
+                )
+                state.last_sample_at = sample["timestamp"]
+                state.last_sample_epoch = sample_epoch
+                state.save(state_path)
+            next_sample_epoch += args.interval_seconds
+            wait_seconds = max(0.0, next_sample_epoch - time.time())
+            if wait_seconds == 0:
+                next_sample_epoch = time.time()
+            stop_sampler.wait(wait_seconds)
 
+    sampler = threading.Thread(
+        target=sample_until_stopped,
+        name="dbtune-soak-sampler",
+        daemon=True,
+    )
+    sampler.start()
+    try:
+        while True:
+            elapsed = time.time() - state.started_at_epoch
+            if elapsed >= state.requested_duration_seconds:
+                break
             for drill in drills:
                 due = elapsed >= state.requested_duration_seconds * drill_fractions[drill]
                 if due and drill not in state.completed_drills:
                     result = run_drill(drill, args.base_url, args.insecure, args.output_dir)
-                    drill_results.append(result)
-                    append_jsonl(events_path, result)
-                    state.completed_drills.append(drill)
-                    state.save(state_path)
-            time.sleep(
-                min(
-                    args.interval_seconds,
-                    max(
-                        0.0,
-                        state.requested_duration_seconds
-                        - (time.time() - state.started_at_epoch),
-                    ),
-                )
-            )
+                    append_jsonl(events_path, result, event_lock)
+                    with state_lock:
+                        state.completed_drills.append(drill)
+                        state.drill_results[drill] = result
+                        state.save(state_path)
+            time.sleep(1)
     except KeyboardInterrupt:
         interrupted = True
     finally:
+        stop_sampler.set()
+        sampler.join(timeout=max(40, args.interval_seconds + 5))
         final_transactions = target_transaction_count()
         elapsed = max(0.0, time.time() - state.started_at_epoch)
-        ready_samples = sum(1 for sample in samples if sample["ready"])
-        readiness_ratio = ready_samples / len(samples) if samples else 0.0
+        observation_seconds = min(elapsed, state.requested_duration_seconds)
+        expected_samples, sample_coverage_ratio = sampling_coverage(
+            state.samples_total,
+            observation_seconds,
+            args.interval_seconds,
+        )
+        observation_end_epoch = state.started_at_epoch + observation_seconds
+        tail_gap_seconds = max(
+            0.0,
+            observation_end_epoch
+            - (
+                state.last_sample_epoch
+                if state.last_sample_epoch is not None
+                else state.started_at_epoch
+            ),
+        )
+        max_sample_gap_seconds = max(
+            state.max_sample_gap_seconds,
+            tail_gap_seconds,
+        )
+        maximum_allowed_gap_seconds = max(60.0, args.interval_seconds * 3)
+        sampling_continuous = (
+            sample_coverage_ratio >= 0.995
+            and max_sample_gap_seconds <= maximum_allowed_gap_seconds
+        )
+        readiness_ratio = (
+            state.ready_samples / state.samples_total if state.samples_total else 0.0
+        )
         transaction_progress = (
-            final_transactions is not None
-            and state.baseline_transactions is not None
-            and final_transactions > state.baseline_transactions
+            state.baseline_transactions is not None
+            and state.max_transactions is not None
+            and state.max_transactions > state.baseline_transactions
         )
         all_drills_recorded = all(name in state.completed_drills for name in drills)
-        drills_passed = all(item["passed"] for item in drill_results) and all_drills_recorded
+        drills_passed = all(
+            state.drill_results.get(name, {}).get("passed") is True
+            for name in drills
+        ) and all_drills_recorded
         mechanics_passed = (
             interlocks_ok
+            and sampling_continuous
             and readiness_ratio >= 0.995
             and transaction_progress
             and drills_passed
@@ -297,7 +468,12 @@ def main() -> None:
         )
         qualification_seconds = args.qualification_hours * 3600
         qualification_complete = elapsed >= qualification_seconds
-        decision = classify_decision(mechanics_passed, qualification_complete)
+        external_complete, external_evidence = external_gates(args.external_evidence)
+        decision = classify_decision(
+            mechanics_passed,
+            qualification_complete,
+            external_complete,
+        )
         summary = {
             "started_at": datetime.fromtimestamp(
                 state.started_at_epoch, timezone.utc
@@ -308,14 +484,25 @@ def main() -> None:
             "qualification_seconds": qualification_seconds,
             "qualification_complete": qualification_complete,
             "interrupted": interrupted,
-            "samples": len(samples),
+            "samples": state.samples_total,
+            "expected_samples": expected_samples,
+            "sample_coverage_ratio": round(sample_coverage_ratio, 6),
+            "max_sample_gap_seconds": round(max_sample_gap_seconds, 3),
+            "maximum_allowed_sample_gap_seconds": round(
+                maximum_allowed_gap_seconds,
+                3,
+            ),
+            "sampling_continuous": sampling_continuous,
+            "ready_samples": state.ready_samples,
             "readiness_ratio": round(readiness_ratio, 6),
             "baseline_transactions": state.baseline_transactions,
             "final_transactions": final_transactions,
             "transaction_progress": transaction_progress,
             "completed_drills": state.completed_drills,
-            "drill_results": drill_results,
+            "drill_results": list(state.drill_results.values()),
             "mechanics_passed": mechanics_passed,
+            "external_gates_complete": external_complete,
+            "external_evidence": external_evidence,
             "decision": decision,
         }
         summary_path.write_text(

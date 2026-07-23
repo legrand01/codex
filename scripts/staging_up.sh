@@ -6,8 +6,10 @@ cd "$ROOT"
 
 ALLOW_LOCAL=()
 LAB_PROFILE=()
+LOCAL_PROFILE=()
 if [[ "${1:-}" == "--local" ]]; then
   ALLOW_LOCAL=(--allow-local)
+  LOCAL_PROFILE=(--profile local-observability)
   shift
 fi
 if [[ "${1:-}" == "--with-lab" ]]; then
@@ -22,6 +24,7 @@ docker compose \
   -f ops/staging/docker-compose.staging.yml \
   --profile observability \
   --profile operations \
+  "${LOCAL_PROFILE[@]}" \
   "${LAB_PROFILE[@]}" \
   up -d --build
 

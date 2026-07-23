@@ -95,7 +95,7 @@ def main() -> None:
     password = existing.get("POSTGRES_PASSWORD") or secrets.token_urlsafe(36)
     redis_password = existing.get("REDIS_PASSWORD") or secrets.token_urlsafe(36)
     admin_token = existing.get("BOOTSTRAP_ADMIN_TOKEN") or secrets.token_urlsafe(48)
-    webhook = args.alert_webhook or "http://host.docker.internal:9/dbtune-alerts"
+    webhook = args.alert_webhook or "http://alert-sink:9099/alerts"
     public_origin = f"https://{args.hostname}"
     database_url = (
         "postgresql://dbtune_control:"
@@ -112,6 +112,13 @@ def main() -> None:
         "BOOTSTRAP_ADMIN_TOKEN": admin_token,
         "ALERT_WEBHOOK_URL": webhook,
     }
+    for retained_key in (
+        "TARGET_AGENT_HOST_ID",
+        "TARGET_AGENT_TOKEN",
+        "TARGET_AGENT_INSTANCE_ID",
+    ):
+        if existing.get(retained_key):
+            values[retained_key] = existing[retained_key]
     for key, value in values.items():
         text = replace_value(text, key, value)
     ENV_FILE.write_text(text, encoding="utf-8")

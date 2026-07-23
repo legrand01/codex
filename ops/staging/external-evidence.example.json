@@ -1,0 +1,18 @@
+{
+  "real_tls": {
+    "verified": false,
+    "evidence": ""
+  },
+  "external_alert_delivery": {
+    "verified": false,
+    "evidence": ""
+  },
+  "independent_off_host_restore": {
+    "verified": false,
+    "evidence": ""
+  },
+  "staffed_go_no_go": {
+    "verified": false,
+    "evidence": ""
+  }
+}

@@ -48,6 +48,21 @@ services:
       - ./.staging/secrets/tls.key:/run/secrets/tls.key:ro
     security_opt:
       - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-check-certificate",
+          "-q",
+          "-O",
+          "/dev/null",
+          "https://127.0.0.1:443/health/ready",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
 
   postgres:
     environment:
@@ -125,6 +140,36 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+
+  alert-sink:
+    image: python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
+    profiles: ["local-observability"]
+    command: ["python", "/opt/dbtune/alert_sink.py"]
+    environment:
+      - ALERT_SINK_OUTPUT=/alerts/alerts.jsonl
+    volumes:
+      - ./ops/staging/alert_sink.py:/opt/dbtune/alert_sink.py:ro
+      - ./artifacts/staging-alerts:/alerts
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:9099/health', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   backup:
     image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777

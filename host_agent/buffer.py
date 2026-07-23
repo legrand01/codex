@@ -15,6 +15,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -137,19 +138,31 @@ class EvidenceBuffer:
                     break  # No more entries to evict
                 current_size = self._calculate_size()
 
-            # Generate filename using timestamp for chronological ordering
-            # Use monotonic counter suffix to handle sub-microsecond additions
-            timestamp = time.time()
-            filename = f"{timestamp:.9f}_{os.getpid()}_{id(snapshot)}.json"
+            # Sort replay by the evidence collection timestamp, not by when a
+            # concurrent collector happened to finish buffering it.
+            timestamp = self._snapshot_timestamp(snapshot)
+            filename = f"{timestamp:020.9f}_{os.getpid()}_{id(snapshot)}.json"
             filepath = self._buffer_dir / filename
 
             # Ensure unique filename
             while filepath.exists():
                 timestamp += 0.000000001
-                filename = f"{timestamp:.9f}_{os.getpid()}_{id(snapshot)}.json"
+                filename = f"{timestamp:020.9f}_{os.getpid()}_{id(snapshot)}.json"
                 filepath = self._buffer_dir / filename
 
             filepath.write_text(serialized, encoding="utf-8")
+
+    @staticmethod
+    def _snapshot_timestamp(snapshot: dict) -> float:
+        value = snapshot.get("collected_at", snapshot.get("timestamp"))
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                pass
+        return time.time()
 
     def flush(self) -> List[dict]:
         """

@@ -685,9 +685,22 @@ class HostAgent:
             self._evidence_buffer.add(snapshot)
             return
 
+        # A recovering agent must transmit the persisted FIFO before newer
+        # evidence. Buffer the current snapshot behind the backlog, then use
+        # the oldest entry as the connectivity probe. This preserves the
+        # collection chronology across an outage.
+        if self._evidence_buffer.current_count or self._flush_lock.locked():
+            self._evidence_buffer.add(snapshot)
+            if self._flush_lock.locked():
+                return
+            if await self._flush_evidence_buffer():
+                self._evidence_circuit.record_success()
+            else:
+                self._evidence_circuit.record_failure()
+            return
+
         if await self._send_evidence_once(snapshot):
             self._evidence_circuit.record_success()
-            await self._flush_evidence_buffer()
         else:
             self._evidence_circuit.record_failure()
             self._evidence_buffer.add(snapshot)
@@ -709,10 +722,12 @@ class HostAgent:
             logger.error("Evidence submission failed: %s", exc)
         return False
 
-    async def _flush_evidence_buffer(self) -> None:
+    async def _flush_evidence_buffer(self) -> bool:
         """Flush persisted evidence in order, preserving unsent entries on failure."""
-        if self._evidence_buffer.current_count == 0 or self._flush_lock.locked():
-            return
+        if self._evidence_buffer.current_count == 0:
+            return True
+        if self._flush_lock.locked():
+            return False
         async with self._flush_lock:
             buffered = self._evidence_buffer.flush()
             for index, entry in enumerate(buffered):
@@ -720,8 +735,8 @@ class HostAgent:
                     continue
                 for unsent in buffered[index:]:
                     self._evidence_buffer.add(unsent)
-                self._evidence_circuit.record_failure()
-                return
+                return False
+        return True
 
     def _agent_headers(self) -> Dict[str, str]:
         headers = {"X-Agent-Instance-ID": self.agent_instance_id}

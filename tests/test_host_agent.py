@@ -191,6 +191,11 @@ async def test_evidence_submission_buffers_and_flushes_after_recovery(agent):
     await agent._submit_evidence({"sequence": 2})
     assert agent._evidence_buffer.current_count == 0
     assert agent._http_client.post.await_count == 3
+    sent = [
+        call.kwargs["json"]["sequence"]
+        for call in agent._http_client.post.await_args_list
+    ]
+    assert sent == [1, 1, 2]
 
 
 # ============================================================================

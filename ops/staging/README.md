@@ -63,24 +63,40 @@ If the process or host is interrupted, rerun the same command with `--resume`.
 The state and append-only event stream survive process restarts.
 
 The automatic drills restart the worker, restart Redis, and create and restore
-a control-plane backup into a disposable database. During the window, also
-perform and record these operator drills:
+a control-plane backup into a disposable database. It also disconnects the
+control plane while the Host Agent continues collecting, proves chronological
+buffer replay, starts a duplicate agent and verifies the production write
+interlock plus alert, and applies a deliberately regressive `work_mem` candidate
+before proving byte-exact managed-file rollback. Readiness sampling runs in a
+separate thread throughout the drills and cumulative samples/drill outcomes are
+written atomically for safe `--resume`.
 
-1. Stop the target Host Agent long enough to verify local evidence buffering,
-   then reconnect and verify chronological replay.
-2. Start a second agent with the same host identity and a different instance
-   ID. Verify the critical duplicate alert and that target writes are blocked;
-   then remove it and verify the resolved event.
-3. Exercise a measured regression in the tuning lab and verify automatic
-   byte-exact configuration rollback.
-4. Deliver a test alert through the real paging route and capture its receipt.
-5. Copy a backup off-host and restore it on an independent PostgreSQL instance.
+The local alert sink proves the Prometheus-to-Alertmanager webhook mechanics.
+Production approval still requires evidence from the external paging receiver,
+real public TLS, and a restore outside the staging host. Copy
+`ops/staging/external-evidence.example.json` to a protected operator location,
+fill it only with verifiable evidence identifiers, and pass it to the final
+resume:
+
+```bash
+venv/bin/python scripts/staging_soak.py \
+  --duration-hours 24 \
+  --resume \
+  --base-url https://staging.dbtune.example \
+  --output-dir artifacts/staging-soak/release-candidate \
+  --external-evidence /secure/path/external-evidence.json
+```
 
 ## Go/no-go
 
 `summary.json` may say `GO` only after the full qualification duration, at
 least 99.5% successful readiness samples, ongoing target transaction progress,
-disabled control-plane write interlocks, and all automatic drills passing.
+at least 99.5% of the expected sampling cadence, no sampling gap longer than
+three intervals (or 60 seconds, whichever is greater), disabled control-plane
+write interlocks, all automatic drills passing, and all four external evidence
+gates. This prevents host sleep or a stopped monitor from being counted as
+successful soak time. It reports `PENDING_EXTERNAL_GATES` rather than silently
+treating local alert or restore mechanics as production proof.
 
 Release remains **NO-GO** if any of the following are true:
 

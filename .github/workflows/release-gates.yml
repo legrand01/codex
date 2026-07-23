@@ -28,6 +28,8 @@ jobs:
           scripts/staging_init.py
           scripts/staging_preflight.py
           scripts/provision_staging_lab.py
+          scripts/staging_drills.py
+          scripts/drill_regression_rollback.py
           scripts/staging_soak.py
       - name: Python dependency audit
         run: |

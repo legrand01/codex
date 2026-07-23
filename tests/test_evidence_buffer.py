@@ -91,6 +91,29 @@ class TestEvidenceBuffer:
         for i, entry in enumerate(flushed):
             assert entry["sequence"] == i
 
+    def test_flush_uses_collection_time_when_collectors_finish_out_of_order(self, buffer):
+        """Concurrent completion order must not reorder evidence replay."""
+        buffer.add(
+            {
+                "sequence": 2,
+                "collected_at": "2024-01-01T00:00:02Z",
+            }
+        )
+        buffer.add(
+            {
+                "sequence": 1,
+                "collected_at": "2024-01-01T00:00:01Z",
+            }
+        )
+        buffer.add(
+            {
+                "sequence": 3,
+                "collected_at": "2024-01-01T00:00:03Z",
+            }
+        )
+
+        assert [entry["sequence"] for entry in buffer.flush()] == [1, 2, 3]
+
     def test_flush_clears_buffer(self, buffer):
         """Test that flush removes all entries from the buffer."""
         buffer.add({"host_id": "host-1", "data": "test"})
