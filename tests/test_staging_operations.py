@@ -1,11 +1,12 @@
 """Production staging and soak release-gate tests."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 from scripts.staging_init import replace_value
-from scripts.staging_preflight import load_env
+from scripts.staging_preflight import load_env, validate_workload_bounds
 from scripts.staging_soak import (
     SoakState,
     classify_decision,
@@ -30,6 +31,42 @@ def test_load_env_ignores_comments_and_preserves_json(tmp_path):
         "CORS_ORIGINS": '["https://staging.example"]',
         "DEBUG": "false",
     }
+
+
+def test_local_staging_workload_must_be_rate_limited_and_cpu_bounded():
+    assert validate_workload_bounds({}, allow_local=True) == []
+    assert validate_workload_bounds(
+        {
+            "STAGING_PGBENCH_CLIENTS": "8",
+            "STAGING_PGBENCH_JOBS": "4",
+            "STAGING_PGBENCH_RATE": "0",
+            "STAGING_TARGET_POSTGRES_CPUS": "8",
+        },
+        allow_local=True,
+    ) == [
+        "STAGING_PGBENCH_RATE must be rate-limited above zero",
+        "local staging is capped at 4 clients, 10 transactions/s, "
+        "2 PostgreSQL CPUs, and 0.5 workload CPUs",
+    ]
+
+
+def test_workload_rejects_non_numeric_values_without_shell_evaluation(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    marker = tmp_path / "must-not-exist"
+    environment = dict(os.environ)
+    environment["PGBENCH_CLIENTS"] = f"$(touch {marker})"
+
+    result = subprocess.run(
+        ["sh", str(root / "docker/dbtune-target/run-workload.sh")],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        env=environment,
+    )
+
+    assert result.returncode == 2
+    assert "clients must be a non-negative integer" in result.stderr
+    assert not marker.exists()
 
 
 def test_soak_state_is_resumable(tmp_path, monkeypatch):
@@ -129,3 +166,5 @@ def test_staging_compose_keeps_write_interlocks_disabled():
     )
     assert compose.count("WRITE_EXECUTION_ENABLED=false") >= 2
     assert compose.count("PRODUCTION_WRITE_ENABLED=false") >= 2
+    assert "PGBENCH_RATE=${STAGING_PGBENCH_RATE:-2}" in compose
+    assert 'cpus: "${STAGING_TARGET_POSTGRES_CPUS:-2.0}"' in compose

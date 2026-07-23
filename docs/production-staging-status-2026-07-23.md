@@ -64,9 +64,31 @@ short mechanics test appear qualified. The harness also requires at least 99.5%
 of the expected sampling cadence and a bounded maximum gap, so host sleep or a
 stopped monitor cannot be counted toward qualification.
 
+## Sustainable workload checkpoint — 2026-07-24
+
+The first 24-hour attempt was deliberately rejected after a resource review:
+the original eight-client unlimited lab drove the target PostgreSQL container
+to 524.87% CPU. That is useful for a short stress test but not a sustainable
+production-style soak, especially on a local staging host.
+
+The staging overlay now requires a nonzero rate, defaults to two clients and
+two transactions per second, caps target PostgreSQL at two CPUs and 2 GB, and
+caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
+
+- `pgbench` sustained 2.22 TPS with zero failed transactions and exercised both
+  the weighted transaction and analytical scripts;
+- a ten-sample resource profile measured target PostgreSQL at 5.17% mean and
+  34.25% maximum CPU, versus 0.13% mean and 0.35% maximum for the generator;
+- the Host Agent remained connected and all seven evidence types stayed fresh;
+  and
+- the measured rollback proof still distinguished the settings: median query
+  execution was 106.4 ms with `work_mem=4MB` versus 155.6 ms at `64kB`, with
+  median temporary writes increasing from 6,606 to 55,170 blocks. Rollback
+  returned to 106.9 ms and the drill restored the exact pre-drill source.
+
 ## Automated release evidence
 
-- Backend: 633 passed, 5 skipped.
+- Backend: 637 passed, 5 skipped.
 - Ruff: passed.
 - Strict type checking for the new staging/release modules: passed.
 - Frontend lint and production build: passed.

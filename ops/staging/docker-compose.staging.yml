@@ -171,6 +171,28 @@ services:
     cap_drop:
       - ALL
 
+  target-postgres:
+    cpus: "${STAGING_TARGET_POSTGRES_CPUS:-2.0}"
+    mem_limit: "${STAGING_TARGET_POSTGRES_MEMORY:-2g}"
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+
+  target-workload:
+    environment:
+      - PGBENCH_CLIENTS=${STAGING_PGBENCH_CLIENTS:-2}
+      - PGBENCH_JOBS=${STAGING_PGBENCH_JOBS:-2}
+      - PGBENCH_RATE=${STAGING_PGBENCH_RATE:-2}
+      - PGBENCH_DURATION_SECONDS=60
+      - PGBENCH_PROGRESS_SECONDS=10
+    cpus: "${STAGING_TARGET_WORKLOAD_CPUS:-0.5}"
+    mem_limit: "${STAGING_TARGET_WORKLOAD_MEMORY:-128m}"
+    pids_limit: 32
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
   backup:
     image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     profiles: ["operations"]

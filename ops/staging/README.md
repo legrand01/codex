@@ -33,6 +33,15 @@ bash scripts/staging_up.sh --local --with-lab
 The local self-signed certificate and unreachable local alert receiver do not
 satisfy the production staging gate.
 
+The staging overlay rate-limits the mixed transaction/analytics lab to two
+transactions per second with two clients, caps the target PostgreSQL container
+at two CPUs and 2 GB, and caps the workload generator at half a CPU and 128 MB.
+These defaults keep a long soak representative without turning host saturation
+into the experiment. Set the `STAGING_PGBENCH_*` and
+`STAGING_TARGET_*` values in `.env.staging` for a larger isolated host, but keep
+the rate above zero; `staging_preflight.py` rejects an unlimited workload and
+enforces the local ceiling.
+
 ## Target and soak
 
 Register the tuning-lab target and provision its one-time agent token:

@@ -23,6 +23,40 @@ def load_env(path: Path) -> dict[str, str]:
     return values
 
 
+def validate_workload_bounds(
+    values: dict[str, str],
+    *,
+    allow_local: bool,
+) -> list[str]:
+    failures: list[str] = []
+    try:
+        clients = int(values.get("STAGING_PGBENCH_CLIENTS", "2"))
+        jobs = int(values.get("STAGING_PGBENCH_JOBS", "2"))
+        rate = int(values.get("STAGING_PGBENCH_RATE", "2"))
+        target_cpus = float(values.get("STAGING_TARGET_POSTGRES_CPUS", "2.0"))
+        workload_cpus = float(values.get("STAGING_TARGET_WORKLOAD_CPUS", "0.5"))
+    except ValueError:
+        return ["staging workload clients, jobs, rate, and CPU limit must be numeric"]
+    if clients < 1:
+        failures.append("STAGING_PGBENCH_CLIENTS must be at least 1")
+    if jobs < 1 or jobs > clients:
+        failures.append("STAGING_PGBENCH_JOBS must be between 1 and the client count")
+    if rate < 1:
+        failures.append("STAGING_PGBENCH_RATE must be rate-limited above zero")
+    if target_cpus <= 0:
+        failures.append("STAGING_TARGET_POSTGRES_CPUS must be greater than zero")
+    if workload_cpus <= 0:
+        failures.append("STAGING_TARGET_WORKLOAD_CPUS must be greater than zero")
+    if allow_local and (
+        clients > 4 or rate > 10 or target_cpus > 2 or workload_cpus > 0.5
+    ):
+        failures.append(
+            "local staging is capped at 4 clients, 10 transactions/s, "
+            "2 PostgreSQL CPUs, and 0.5 workload CPUs"
+        )
+    return failures
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env.staging")
@@ -34,6 +68,7 @@ def main() -> None:
     if not args.env_file.exists():
         raise SystemExit(f"missing {args.env_file}; run scripts/staging_init.py")
     values = load_env(args.env_file)
+    failures.extend(validate_workload_bounds(values, allow_local=args.allow_local))
 
     expected = {
         "ENVIRONMENT": "production",
