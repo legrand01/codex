@@ -55,7 +55,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
-      - run: npm audit --omit=dev
+      - run: npm audit
 
   containers:
     runs-on: ubuntu-latest
@@ -77,6 +77,12 @@ jobs:
           MIGRATION_DATABASE_URL: postgresql://dbtune_migrator:test-only-migration-password-that-is-long@postgres:5432/dba_agent
           CONTROL_DATABASE_URL: postgresql://dbtune_runtime:test-only-runtime-password-that-is-long@postgres:5432/dba_agent
           BACKUP_DATABASE_URL: postgresql://dbtune_backup:test-only-backup-password-that-is-long@postgres:5432/dba_agent
+          TARGET_POSTGRES_USER: dbtune_lab_bootstrap
+          TARGET_POSTGRES_PASSWORD: test-only-target-bootstrap-password
+          TARGET_AGENT_USER: dbtune_agent
+          TARGET_AGENT_PASSWORD: test-only-target-agent-password
+          TARGET_WORKLOAD_USER: dbtune_workload
+          TARGET_WORKLOAD_PASSWORD: test-only-target-workload-password
           REDIS_PASSWORD: test-only-redis-password-that-is-long
           CONTROL_REDIS_URL: redis://:test-only-redis-password-that-is-long@redis:6379/0
         run: >-
