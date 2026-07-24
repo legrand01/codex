@@ -116,6 +116,15 @@ def main() -> None:
     backup_password = existing.get(
         "POSTGRES_BACKUP_PASSWORD"
     ) or secrets.token_urlsafe(36)
+    target_bootstrap_password = existing.get(
+        "TARGET_POSTGRES_PASSWORD"
+    ) or secrets.token_urlsafe(36)
+    target_agent_password = existing.get(
+        "TARGET_AGENT_PASSWORD"
+    ) or secrets.token_urlsafe(36)
+    target_workload_password = existing.get(
+        "TARGET_WORKLOAD_PASSWORD"
+    ) or secrets.token_urlsafe(36)
     redis_password = existing.get("REDIS_PASSWORD") or secrets.token_urlsafe(36)
     admin_token = existing.get("BOOTSTRAP_ADMIN_TOKEN") or secrets.token_urlsafe(48)
     webhook = args.alert_webhook or "http://alert-sink:9099/alerts"
@@ -144,6 +153,9 @@ def main() -> None:
         "MIGRATION_DATABASE_URL": migration_database_url,
         "CONTROL_DATABASE_URL": runtime_database_url,
         "BACKUP_DATABASE_URL": backup_database_url,
+        "TARGET_POSTGRES_PASSWORD": target_bootstrap_password,
+        "TARGET_AGENT_PASSWORD": target_agent_password,
+        "TARGET_WORKLOAD_PASSWORD": target_workload_password,
         "REDIS_PASSWORD": redis_password,
         "CONTROL_REDIS_URL": f"redis://:{quote(redis_password, safe='')}@redis:6379/0",
         "BOOTSTRAP_ADMIN_TOKEN": admin_token,

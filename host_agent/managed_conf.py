@@ -263,7 +263,7 @@ class ManagedPostgresConf:
         rows = await self.conn.fetch(
             """
             SELECT seqno, sourcefile, sourceline, name, applied, error
-            FROM pg_file_settings
+            FROM public.dbtune_file_settings()
             WHERE name = ANY($1::text[]) OR error IS NOT NULL
             ORDER BY seqno
             """,
@@ -397,7 +397,7 @@ class ManagedPostgresConf:
         rows = await self.conn.fetch(
             """
             SELECT name, applied, error
-            FROM pg_file_settings
+            FROM public.dbtune_file_settings()
             WHERE sourcefile = $1
             ORDER BY seqno
             """,

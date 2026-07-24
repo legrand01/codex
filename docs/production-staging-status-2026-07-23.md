@@ -12,7 +12,7 @@ drills complete.
 ## Verified in the live local staging stack
 
 - Production security validation passed with generated non-default control
-  database, Redis, and administrator secrets.
+  database, tuning-target, Redis, and administrator secrets.
 - TLS ingress served dependency-aware readiness; PostgreSQL and authenticated
   Redis both reported up.
 - The one-shot migration container applied all 19 migrations before API and
@@ -88,16 +88,32 @@ caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
 
 ## Automated release evidence
 
-- Backend: 652 passed, 5 skipped.
+- Backend: 656 passed, 5 skipped.
 - Ruff: passed.
 - Strict type checking for the new staging/release modules: passed.
 - Frontend lint and production build: passed.
-- Frontend production dependency audit: zero known vulnerabilities.
+- Frontend production and build-tool dependency audit: zero known
+  vulnerabilities.
 - Pinned Python 3.11 production runtime lock: zero known vulnerabilities in a
   no-resolution audit.
 - Development and staging Compose models: valid.
 - Backend images rebuilt successfully from the pinned runtime lock.
 - Runtime base and service images use immutable manifest digests.
+- The tuning target now separates its bootstrap, non-superuser agent, and
+  table-DML workload roles. A fresh PostgreSQL 16 proof confirmed that the
+  agent can collect telemetry, inspect only sanitized allowlisted file-setting
+  metadata, atomically manage `postgres_tune.conf`, and reload configuration
+  without table writes, schema creation, `ALTER SYSTEM`, or superuser. The
+  workload can transact on lab tables but cannot tune or reload PostgreSQL.
+  The soak now rejects any live drift from those exact privileges.
+- Production target and independent-restore DSNs require
+  `sslmode=verify-full`; encrypted connections without certificate and
+  hostname verification are rejected.
+- React Router was upgraded to 7.18.1 after a fresh advisory check identified
+  two moderate issues in 6.30.4. Vite and TypeScript ESLint were also upgraded
+  to remove high-severity build-tool path-traversal and ReDoS advisories.
+  Frontend lint and production build pass, and the full npm dependency audit
+  reports zero known vulnerabilities.
 
 The independent-restore operator verifier was also exercised against a separate
 TLS-enabled PostgreSQL 16 container. It rejected a PostgreSQL 17 `pg_restore`
@@ -116,20 +132,24 @@ corrected release artifact.
 1. Run the corrected least-privilege release candidate continuously for at
    least 24 hours in an isolated routable staging host using real TLS and a
    real paging webhook. Its `summary.json` must include a passing structured
-   database-role verification plus an unchanged clean commit and immutable
-   running-image manifest, along with an automatically verified stable TLS peer
-   fingerprint matching the operator evidence.
+   control-plane and target database-role verification plus an unchanged clean
+   commit and immutable running-image manifest, along with an automatically
+   verified stable TLS peer fingerprint matching the operator evidence.
 2. Copy a backup off-host and restore it on an independent PostgreSQL instance.
-3. Burn down the explicitly captured strict typing debt. A full
-   `mypy backend host_agent` currently reports 398 errors in 58 files.
-   `mypy-baseline.json` records exact file, error-code, and normalized-message
-   fingerprints under pinned mypy 1.19.1; CI rejects every unreviewed addition,
-   removal, or change while new production staging modules remain strictly
-   type-checked with no baseline.
-4. Obtain a staffed go/no-go approval. Initial scope must remain one
+3. Obtain a staffed go/no-go approval. Initial scope must remain one
    self-managed PostgreSQL target, reload-only settings, and human approval for
    every candidate. Provider-managed adapters and restart-context settings are
    excluded.
+
+## Accepted release debt
+
+A full `mypy backend host_agent` currently reports 398 errors in 58 files.
+`mypy-baseline.json` records exact file, error-code, and normalized-message
+fingerprints under pinned mypy 1.19.1; CI rejects every unreviewed addition,
+removal, or change while new production staging modules remain strictly
+type-checked with no baseline. This debt remains scheduled for burn-down, but
+the exact non-regression gate replaces the former unbounded typing risk for the
+initial limited release.
 
 Use [the staging runbook](../ops/staging/README.md) for the qualification and
 failure-drill commands.

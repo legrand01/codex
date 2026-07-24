@@ -9,7 +9,10 @@ from typing import Any, Dict, Iterable
 
 import asyncpg
 
-DEFAULT_DSN = "postgresql://dbtune:dbtune-lab-only@127.0.0.1:55433/dbtune_target"
+DEFAULT_DSN = (
+    "postgresql://dbtune_workload:dbtune-workload-lab-only"
+    "@127.0.0.1:55433/dbtune_target"
+)
 QUERY = """
 SELECT customer_id, region_id, SUM(amount) AS revenue, COUNT(*) AS purchases
 FROM sales_events

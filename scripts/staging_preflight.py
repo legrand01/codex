@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
+URL_SAFE_SECRET = re.compile(r"^[A-Za-z0-9_-]{24,}$")
 
 
 def load_env(path: Path) -> dict[str, str]:
@@ -108,6 +110,55 @@ def validate_database_roles(values: dict[str, str]) -> list[str]:
     return failures
 
 
+def validate_target_database_roles(values: dict[str, str]) -> list[str]:
+    failures: list[str] = []
+    role_keys = (
+        ("TARGET_POSTGRES_USER", "dbtune_lab_bootstrap"),
+        ("TARGET_AGENT_USER", "dbtune_agent"),
+        ("TARGET_WORKLOAD_USER", "dbtune_workload"),
+    )
+    password_keys = (
+        "TARGET_POSTGRES_PASSWORD",
+        "TARGET_AGENT_PASSWORD",
+        "TARGET_WORKLOAD_PASSWORD",
+    )
+    users: list[str] = []
+    for key, expected in role_keys:
+        user = values.get(key, "")
+        users.append(user)
+        if user != expected:
+            failures.append(f"{key} must be the dedicated {expected} role")
+    passwords = [values.get(key, "") for key in password_keys]
+    for key, password in zip(password_keys, passwords):
+        if not URL_SAFE_SECRET.fullmatch(password) or "CHANGE_ME" in password:
+            failures.append(
+                f"{key} must contain at least 24 URL-safe random characters"
+            )
+    if len(set(users)) != len(users):
+        failures.append("target bootstrap, agent, and workload roles must be distinct")
+    if any(not password for password in passwords) or len(set(passwords)) != len(
+        passwords
+    ):
+        failures.append(
+            "all target database roles must use distinct non-empty passwords"
+        )
+    control_passwords = {
+        values.get(key, "")
+        for key in (
+            "POSTGRES_PASSWORD",
+            "POSTGRES_MIGRATION_PASSWORD",
+            "POSTGRES_RUNTIME_PASSWORD",
+            "POSTGRES_BACKUP_PASSWORD",
+        )
+        if values.get(key)
+    }
+    if any(password in control_passwords for password in passwords):
+        failures.append(
+            "target database passwords must not reuse control-plane passwords"
+        )
+    return failures
+
+
 def runtime_database_identity(values: dict[str, str]) -> tuple[str, str, str]:
     parsed = urlparse(values.get("CONTROL_DATABASE_URL", ""))
     username = unquote(parsed.username or "")
@@ -135,6 +186,20 @@ def host_runtime_database_url(values: dict[str, str]) -> str:
         f"postgresql://{quote(username, safe='')}:"
         f"{quote(password, safe='')}@127.0.0.1:{port}/"
         f"{quote(database, safe='')}"
+    )
+
+
+def host_target_workload_database_url(values: dict[str, str]) -> str:
+    username = values.get("TARGET_WORKLOAD_USER", "")
+    password = values.get("TARGET_WORKLOAD_PASSWORD", "")
+    port = values.get("TARGET_PG_PORT", "55433")
+    if username != "dbtune_workload" or not password:
+        raise ValueError("TARGET_WORKLOAD_USER and TARGET_WORKLOAD_PASSWORD are required")
+    if not port.isdigit():
+        raise ValueError("TARGET_PG_PORT must be numeric")
+    return (
+        f"postgresql://{quote(username, safe='')}:"
+        f"{quote(password, safe='')}@127.0.0.1:{port}/dbtune_target"
     )
 
 
@@ -186,6 +251,7 @@ def main() -> None:
     values = load_env(args.env_file)
     failures.extend(validate_workload_bounds(values, allow_local=args.allow_local))
     failures.extend(validate_database_roles(values))
+    failures.extend(validate_target_database_roles(values))
     failures.extend(validate_release_identity(values))
 
     expected = {

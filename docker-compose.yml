@@ -187,9 +187,13 @@ services:
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${TARGET_PG_PORT:-55433}:5432"
     environment:
-      - POSTGRES_USER=dbtune
-      - POSTGRES_PASSWORD=dbtune-lab-only
+      - POSTGRES_USER=${TARGET_POSTGRES_USER:-dbtune_lab_bootstrap}
+      - POSTGRES_PASSWORD=${TARGET_POSTGRES_PASSWORD:-dbtune-lab-bootstrap-only}
       - POSTGRES_DB=dbtune_target
+      - POSTGRES_AGENT_USER=${TARGET_AGENT_USER:-dbtune_agent}
+      - POSTGRES_AGENT_PASSWORD=${TARGET_AGENT_PASSWORD:-dbtune-agent-lab-only}
+      - POSTGRES_WORKLOAD_USER=${TARGET_WORKLOAD_USER:-dbtune_workload}
+      - POSTGRES_WORKLOAD_PASSWORD=${TARGET_WORKLOAD_PASSWORD:-dbtune-workload-lab-only}
     command:
       - postgres
       - -c
@@ -201,9 +205,10 @@ services:
     volumes:
       - target_postgres_data:/var/lib/postgresql/data
       - ./docker/dbtune-target/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+      - ./docker/dbtune-target/11-managed-file-reader.sql:/docker-entrypoint-initdb.d/11-managed-file-reader.sql:ro
       - ./docker/dbtune-target/20-managed-conf.sh:/docker-entrypoint-initdb.d/20-managed-conf.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dbtune -d dbtune_target"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d dbtune_target"]
       interval: 3s
       timeout: 3s
       retries: 30
@@ -226,7 +231,7 @@ services:
       - AGENT_INSTANCE_ID=${TARGET_AGENT_INSTANCE_ID:-f9e89d36-f4cb-4f31-8b3a-e8a92fb4a916}
       - AGENT_AUTH_REQUIRED=${AGENT_AUTH_REQUIRED:-true}
       - AGENT_HOSTNAME=${TARGET_AGENT_HOSTNAME:-dbtune-target}
-      - PG_CONNECTION_STRING=postgresql://dbtune:dbtune-lab-only@target-postgres:5432/dbtune_target
+      - PG_CONNECTION_STRING=postgresql://${TARGET_AGENT_USER:-dbtune_agent}:${TARGET_AGENT_PASSWORD:-dbtune-agent-lab-only}@target-postgres:5432/dbtune_target
       - PG_SETTINGS_INTERVAL=10
       - PG_STATS_INTERVAL=5
       - LOCKS_REPLICATION_INTERVAL=5
@@ -251,8 +256,8 @@ services:
     environment:
       - PGHOST=target-postgres
       - PGPORT=5432
-      - PGUSER=dbtune
-      - PGPASSWORD=dbtune-lab-only
+      - PGUSER=${TARGET_WORKLOAD_USER:-dbtune_workload}
+      - PGPASSWORD=${TARGET_WORKLOAD_PASSWORD:-dbtune-workload-lab-only}
       - PGDATABASE=dbtune_target
     volumes:
       - ./docker/dbtune-target/transaction.sql:/workload/transaction.sql:ro

@@ -36,7 +36,7 @@ services:
       - WRITE_EXECUTION_ENABLED=false
       - PRODUCTION_WRITE_ENABLED=false
       - PRODUCTION_WRITE_CONFIRMATION=
-      - DBTUNE_LAB_TARGET_DSN=postgresql://dbtune:dbtune-lab-only@target-postgres:5432/dbtune_target
+      - DBTUNE_LAB_TARGET_DSN=postgresql://${TARGET_AGENT_USER:?TARGET_AGENT_USER is required}:${TARGET_AGENT_PASSWORD:?TARGET_AGENT_PASSWORD is required}@target-postgres:5432/dbtune_target
     read_only: true
     tmpfs:
       - /tmp:size=128m,mode=1777
@@ -234,6 +234,14 @@ services:
       - ALL
 
   target-postgres:
+    environment:
+      - POSTGRES_USER=${TARGET_POSTGRES_USER:?TARGET_POSTGRES_USER is required}
+      - POSTGRES_PASSWORD=${TARGET_POSTGRES_PASSWORD:?TARGET_POSTGRES_PASSWORD is required}
+      - POSTGRES_DB=dbtune_target
+      - POSTGRES_AGENT_USER=${TARGET_AGENT_USER:?TARGET_AGENT_USER is required}
+      - POSTGRES_AGENT_PASSWORD=${TARGET_AGENT_PASSWORD:?TARGET_AGENT_PASSWORD is required}
+      - POSTGRES_WORKLOAD_USER=${TARGET_WORKLOAD_USER:?TARGET_WORKLOAD_USER is required}
+      - POSTGRES_WORKLOAD_PASSWORD=${TARGET_WORKLOAD_PASSWORD:?TARGET_WORKLOAD_PASSWORD is required}
     cpus: "${STAGING_TARGET_POSTGRES_CPUS:-2.0}"
     mem_limit: "${STAGING_TARGET_POSTGRES_MEMORY:-2g}"
     pids_limit: 128
@@ -244,9 +252,13 @@ services:
     build:
       args:
         RELEASE_COMMIT_SHA: ${RELEASE_COMMIT_SHA:?RELEASE_COMMIT_SHA is required}
+    environment:
+      - PG_CONNECTION_STRING=postgresql://${TARGET_AGENT_USER:?TARGET_AGENT_USER is required}:${TARGET_AGENT_PASSWORD:?TARGET_AGENT_PASSWORD is required}@target-postgres:5432/dbtune_target
 
   target-workload:
     environment:
+      - PGUSER=${TARGET_WORKLOAD_USER:?TARGET_WORKLOAD_USER is required}
+      - PGPASSWORD=${TARGET_WORKLOAD_PASSWORD:?TARGET_WORKLOAD_PASSWORD is required}
       - PGBENCH_CLIENTS=${STAGING_PGBENCH_CLIENTS:-2}
       - PGBENCH_JOBS=${STAGING_PGBENCH_JOBS:-2}
       - PGBENCH_RATE=${STAGING_PGBENCH_RATE:-2}

@@ -68,7 +68,7 @@ function App() {
   }
 
   return (
-    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <Router>
       <DemoModeBanner active={demoActive} />
       <div className="app">
         <header className="app-header">

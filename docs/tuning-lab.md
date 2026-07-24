@@ -5,6 +5,14 @@ plane and starts with `work_mem=64kB` so the analytical workload spills to disk.
 Eight `pgbench` clients continuously mix account-transfer transactions with a
 large aggregation and sort.
 
+The target uses three separate database identities. `dbtune_lab_bootstrap` owns
+the disposable cluster but is not used by the agent or workload.
+`dbtune_agent` is a non-superuser with `pg_monitor`, execute access to a
+security-definer helper that exposes only allowlisted file-setting metadata,
+and the explicit `pg_reload_conf()` grant needed by the managed-file backend.
+`dbtune_workload` can read and modify the lab tables but has no PostgreSQL
+administrative privileges.
+
 Start it, including the authenticated Host Agent that owns the managed include:
 
 ```bash
@@ -90,13 +98,13 @@ Emergency-reset the managed file to the image baseline without deleting data:
 ```bash
 docker compose --profile tuning-lab exec target-postgres \
   sh -lc "rm -f /var/lib/postgresql/data/conf.d/postgres_tune.conf && \
-  psql -U dbtune -d dbtune_target -c 'SELECT pg_reload_conf()'"
+  psql -U dbtune_agent -d dbtune_target -c 'SELECT pg_reload_conf()'"
 ```
 
 Local target DSN:
 
 ```text
-postgresql://dbtune:dbtune-lab-only@127.0.0.1:55433/dbtune_target
+postgresql://dbtune_workload:dbtune-workload-lab-only@127.0.0.1:55433/dbtune_target
 ```
 
 The password is intentionally local-lab-only. Never reuse this configuration

@@ -414,6 +414,9 @@ class HostAgent:
                         )
                         managed = await manager.preflight([])
                         report["managed_file_access"] = bool(managed["passed"])
+                        if report["managed_file_access"]:
+                            report["configuration_write"] = True
+                            probes["configuration_write"] = "managed file access"
                         probes["managed_file_access"] = (
                             "passed"
                             if managed["passed"]

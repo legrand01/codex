@@ -49,19 +49,25 @@ use different role names but must preserve the same privilege boundaries.
 ## 2. Provision each target with least privilege
 
 Use a distinct login per target. Grant only the parameters approved for that
-host; repeat the final statement for each allowlisted parameter:
+host:
 
 ```sql
 CREATE ROLE dbtune_agent LOGIN PASSWORD '<secret>';
-GRANT pg_read_all_settings TO dbtune_agent;
+GRANT pg_monitor TO dbtune_agent;
 GRANT EXECUTE ON FUNCTION pg_catalog.pg_reload_conf() TO dbtune_agent;
+```
+
+For the SQL backend only, repeat this statement for each allowlisted parameter:
+
+```sql
 GRANT ALTER SYSTEM ON PARAMETER work_mem TO dbtune_agent;
 ```
 
 Store its TLS DSN under a target-specific environment variable such as
 `DBTUNE_TARGET_ACME_PRIMARY_DSN`. Configure the host with only that environment
 variable name; the DSN itself is never stored in the control-plane database.
-Production target DSNs must use `sslmode=require`, `verify-ca`, or `verify-full`.
+Production target DSNs must use `sslmode=verify-full` so encryption, certificate
+trust, and hostname identity are all checked.
 
 Rotate an agent token through `POST /api/v1/fleet/{host_id}/agent-token`, then
 deploy the returned one-time token as `AGENT_TOKEN`. Persist
@@ -74,11 +80,26 @@ tested, and enrolled for the target; connectivity alone never enables them.
 For an enrolled self-managed host, set an absolute `MANAGED_CONF_PATH` ending
 in `conf.d/postgres_tune.conf`. Provision `postgresql.conf` with a deterministic
 late `include_dir = 'conf.d'`, and give the Host Agent access to that directory.
+As the target DBA, install the restricted file-setting reader; it exposes only
+allowlisted parameters and sanitized parse errors, not the full contents of
+PostgreSQL configuration files:
+
+```bash
+POSTGRES_AGENT_USER=dbtune_agent psql "$TARGET_DBA_DSN" \
+  --file docker/dbtune-target/11-managed-file-reader.sql
+```
+
 The agent verifies include ordering, same-filesystem atomic replacement,
 ownership, mode, free space, `pg_file_settings`, and reload permission before
 advertising the capability. It rejects command-line, `postgresql.auto.conf`,
 later-include, database/user, or provider-owned conflicts. Do not grant the
 control-plane process direct access to the target filesystem.
+
+The managed-file backend does not require `ALTER SYSTEM` privilege. Its
+configuration-write capability is proven by atomic managed-file preflight plus
+the restricted file-setting reader and the explicit `pg_reload_conf()` grant.
+Grant per-parameter `ALTER SYSTEM` only when intentionally enrolling the SQL
+backend.
 
 Managed cloud hosts must select `configuration_backend=provider` and have an
 explicit adapter for their platform. Missing adapters fail closed; never enable

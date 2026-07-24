@@ -636,6 +636,53 @@ class TestCapabilityReporting:
         assert report["system_metrics"] is False
 
     @pytest.mark.asyncio
+    async def test_managed_file_write_does_not_require_alter_system(
+        self, valid_config, monkeypatch
+    ):
+        class ManagedFileProbe:
+            def __init__(self, conn, path):
+                del conn, path
+
+            async def preflight(self, changes):
+                assert changes == []
+                return {"passed": True, "errors": [], "environment": {}}
+
+        conn = MagicMock()
+        conn.fetchrow = AsyncMock(
+            side_effect=[
+                MockRecord(
+                    database_name="appdb",
+                    database_user="dbtune_agent",
+                    server_version_num=160000,
+                    is_replica=False,
+                    is_superuser=False,
+                ),
+                MockRecord(name="work_mem"),
+                None,
+                MockRecord(permitted=False),
+                MockRecord(permitted=True),
+            ]
+        )
+        valid_config.managed_file_access = True
+        valid_config.managed_conf_path = (
+            "/var/lib/postgresql/data/conf.d/postgres_tune.conf"
+        )
+        monkeypatch.setattr("agent.ManagedPostgresConf", ManagedFileProbe)
+        probe_agent = HostAgent(config=valid_config, conn=conn)
+        probe_agent.collect_os_metrics = AsyncMock(
+            return_value={"data": {"cpu_percent": 1}}
+        )
+
+        report = await probe_agent.probe_capabilities()
+
+        assert report["managed_file_access"] is True
+        assert report["configuration_write"] is True
+        assert report["reload_permission"] is True
+        assert report["details"]["probes"]["configuration_write"] == (
+            "managed file access"
+        )
+
+    @pytest.mark.asyncio
     async def test_report_capabilities_posts_snapshot(self, agent):
         agent.probe_capabilities = AsyncMock(
             return_value={

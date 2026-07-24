@@ -12,15 +12,16 @@ from uuid import UUID
 
 import asyncpg  # type: ignore[import-untyped]
 from benchmark_tuning_lab import benchmark
-from staging_preflight import host_runtime_database_url, load_env
+from staging_preflight import (
+    host_runtime_database_url,
+    host_target_workload_database_url,
+    load_env,
+)
 
 from backend.config import settings
 from backend.services.configuration_backends import ManagedConfFileBackend
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET_DSN = "postgresql://dbtune:dbtune-lab-only@127.0.0.1:55433/dbtune_target"
-
-
 def control_dsn(values: dict[str, str]) -> str:
     return host_runtime_database_url(values)
 
@@ -37,6 +38,7 @@ def regressed(baseline: dict[str, Any], candidate: dict[str, Any]) -> bool:
 
 
 async def run_drill(values: dict[str, str], runs: int) -> dict[str, Any]:
+    target_dsn = host_target_workload_database_url(values)
     host_id = UUID(values["TARGET_AGENT_HOST_ID"])
     pool = await asyncpg.create_pool(control_dsn(values), min_size=1, max_size=4)
     backend = ManagedConfFileBackend(pool)
@@ -73,7 +75,7 @@ async def run_drill(values: dict[str, str], runs: int) -> dict[str, Any]:
                 host_id,
             )
         settings.write_execution_enabled = True
-        os.environ["DBTUNE_LAB_TARGET_DSN"] = TARGET_DSN
+        os.environ["DBTUNE_LAB_TARGET_DSN"] = target_dsn
 
         original_snapshot = await backend.capture_snapshot(host_id, ["work_mem"])
         baseline_change = [{"setting_name": "work_mem", "proposed_value": "4MB"}]
@@ -87,7 +89,7 @@ async def run_drill(values: dict[str, str], runs: int) -> dict[str, Any]:
             baseline_change,
             original_snapshot,
         )
-        baseline = await benchmark(TARGET_DSN, runs)
+        baseline = await benchmark(target_dsn, runs)
         if str(baseline["work_mem"]).lower() not in {"4mb", "4096kb"}:
             raise RuntimeError(
                 f"controlled baseline did not activate 4MB work_mem: {baseline['work_mem']}"
@@ -103,7 +105,7 @@ async def run_drill(values: dict[str, str], runs: int) -> dict[str, Any]:
             degraded_change,
             baseline_snapshot,
         )
-        degraded = await benchmark(TARGET_DSN, runs)
+        degraded = await benchmark(target_dsn, runs)
         if str(degraded["work_mem"]).lower() != "64kb":
             raise RuntimeError(
                 "degraded candidate did not activate 64kB work_mem: "
@@ -127,7 +129,7 @@ async def run_drill(values: dict[str, str], runs: int) -> dict[str, Any]:
         if not rollback.succeeded or not rollback.rolled_back:
             raise RuntimeError("managed-file regression rollback did not report success")
         degraded_rolled_back = True
-        restored = await benchmark(TARGET_DSN, runs)
+        restored = await benchmark(target_dsn, runs)
         restored_snapshot = await backend.capture_snapshot(host_id, ["work_mem"])
         expected_value = str(baseline_snapshot["work_mem"]["value"]).lower()
         restored_value = str(restored_snapshot["work_mem"]["value"]).lower()

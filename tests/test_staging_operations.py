@@ -16,6 +16,7 @@ from scripts.staging_preflight import (
     runtime_database_identity,
     validate_database_roles,
     validate_release_identity,
+    validate_target_database_roles,
     validate_workload_bounds,
 )
 from scripts.staging_soak import (
@@ -29,6 +30,7 @@ from scripts.staging_soak import (
     sampling_coverage,
     tls_peer_evidence,
     verify_database_roles,
+    verify_target_database_roles,
 )
 
 
@@ -62,14 +64,18 @@ def test_staging_init_generates_distinct_database_role_credentials(
 
     values = load_env(env_file)
     assert validate_database_roles(values) == []
+    assert validate_target_database_roles(values) == []
     assert values["RELEASE_COMMIT_SHA"] == "a" * 40
     passwords = {
         values["POSTGRES_PASSWORD"],
         values["POSTGRES_MIGRATION_PASSWORD"],
         values["POSTGRES_RUNTIME_PASSWORD"],
         values["POSTGRES_BACKUP_PASSWORD"],
+        values["TARGET_POSTGRES_PASSWORD"],
+        values["TARGET_AGENT_PASSWORD"],
+        values["TARGET_WORKLOAD_PASSWORD"],
     }
-    assert len(passwords) == 4
+    assert len(passwords) == 7
 
 
 def test_load_env_ignores_comments_and_preserves_json(tmp_path):
@@ -138,6 +144,38 @@ def test_database_roles_must_be_distinct_and_least_privilege_ready():
         "CONTROL_DATABASE_URL must use the dedicated dbtune_runtime role",
         "CONTROL_DATABASE_URL password must match POSTGRES_RUNTIME_PASSWORD",
         "bootstrap, migrator, runtime, and backup roles must be distinct",
+    ]
+
+
+def test_target_database_roles_must_be_distinct_and_least_privilege_ready():
+    values = {
+        "TARGET_POSTGRES_USER": "dbtune_lab_bootstrap",
+        "TARGET_POSTGRES_PASSWORD": "target-bootstrap-password-long",
+        "TARGET_AGENT_USER": "dbtune_agent",
+        "TARGET_AGENT_PASSWORD": "target-agent-password-is-long",
+        "TARGET_WORKLOAD_USER": "dbtune_workload",
+        "TARGET_WORKLOAD_PASSWORD": "target-workload-password-long",
+    }
+    assert validate_target_database_roles(values) == []
+
+    values["TARGET_WORKLOAD_PASSWORD"] = "unsafe-password-with-@-symbol"
+    assert validate_target_database_roles(values) == [
+        "TARGET_WORKLOAD_PASSWORD must contain at least 24 URL-safe random characters"
+    ]
+    values["TARGET_WORKLOAD_PASSWORD"] = "target-workload-password-long"
+
+    values["POSTGRES_RUNTIME_PASSWORD"] = values["TARGET_AGENT_PASSWORD"]
+    assert validate_target_database_roles(values) == [
+        "target database passwords must not reuse control-plane passwords"
+    ]
+    del values["POSTGRES_RUNTIME_PASSWORD"]
+
+    values["TARGET_WORKLOAD_USER"] = "dbtune_agent"
+    values["TARGET_WORKLOAD_PASSWORD"] = values["TARGET_AGENT_PASSWORD"]
+    assert validate_target_database_roles(values) == [
+        "TARGET_WORKLOAD_USER must be the dedicated dbtune_workload role",
+        "target bootstrap, agent, and workload roles must be distinct",
+        "all target database roles must use distinct non-empty passwords",
     ]
 
 
@@ -414,6 +452,20 @@ def test_external_gates_are_structured_and_bound_to_release(tmp_path):
     assert complete is True
     assert payload["validation_errors"] == []
 
+    evidence["gates"]["independent_off_host_restore"]["evidence"][
+        "restore_host"
+    ] = " STAGING-PRIMARY "
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+    complete, payload = external_gates(path, expected_release_sha=release_sha)
+    assert complete is False
+    assert (
+        "independent_off_host_restore: source_host and restore_host must differ"
+        in payload["validation_errors"]
+    )
+    evidence["gates"]["independent_off_host_restore"]["evidence"][
+        "restore_host"
+    ] = "restore-validator"
+
     evidence["unexpected_secret"] = "must-not-enter-summary"
     path.write_text(json.dumps(evidence), encoding="utf-8")
     complete, payload = external_gates(path, expected_release_sha=release_sha)
@@ -591,6 +643,42 @@ def test_database_role_verification_is_structured_and_fail_closed(monkeypatch):
     assert verify_database_roles() == (False, {}, "not-json")
 
 
+def test_target_role_verification_is_structured_and_fail_closed(monkeypatch):
+    payload = {
+        "passed": True,
+        "agent_role_safe": True,
+        "agent_has_no_alter_system": True,
+        "workload_can_transact": True,
+        "helper_is_restricted": True,
+    }
+    monkeypatch.setattr(
+        "scripts.staging_soak.run",
+        lambda command, timeout=120: subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps(payload),
+            stderr="",
+        ),
+    )
+    passed, evidence, detail = verify_target_database_roles()
+    assert passed is True
+    assert evidence == payload
+    assert json.loads(detail) == payload
+
+    monkeypatch.setattr(
+        "scripts.staging_soak.run",
+        lambda command, timeout=120: subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=json.dumps({**payload, "passed": False}),
+            stderr="",
+        ),
+    )
+    passed, evidence, _ = verify_target_database_roles()
+    assert passed is False
+    assert evidence["helper_is_restricted"] is True
+
+
 def test_staging_compose_keeps_write_interlocks_disabled():
     root = Path(__file__).resolve().parents[1]
     compose = (root / "ops/staging/docker-compose.staging.yml").read_text(
@@ -603,6 +691,9 @@ def test_staging_compose_keeps_write_interlocks_disabled():
     assert "control-role-init:" in compose
     assert "DATABASE_URL=${MIGRATION_DATABASE_URL:" in compose
     assert "PGUSER=dbtune_backup" in compose
+    assert "POSTGRES_USER=${TARGET_POSTGRES_USER:" in compose
+    assert "PGUSER=${TARGET_WORKLOAD_USER:" in compose
+    assert "PG_CONNECTION_STRING=postgresql://${TARGET_AGENT_USER:" in compose
     assert compose.count("RELEASE_COMMIT_SHA: ${RELEASE_COMMIT_SHA:") == 5
 
     for dockerfile_name in ("Dockerfile.backend", "Dockerfile.frontend"):
@@ -620,3 +711,35 @@ def test_role_initializer_removes_unexpected_inherited_privileges():
     assert "FROM pg_auth_members AS membership" in initializer
     assert "REVOKE %I FROM %I" in initializer
     assert "GRANT pg_read_all_data TO dbtune_backup" in initializer
+
+
+def test_tuning_target_uses_separate_non_superuser_agent_and_workload_roles():
+    root = Path(__file__).resolve().parents[1]
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    initializer = (root / "docker/dbtune-target/init.sql").read_text(
+        encoding="utf-8"
+    )
+    managed_reader = (
+        root / "docker/dbtune-target/11-managed-file-reader.sql"
+    ).read_text(encoding="utf-8")
+    soak = (root / "scripts/staging_soak.py").read_text(encoding="utf-8")
+    assert "POSTGRES_USER=${TARGET_POSTGRES_USER:-dbtune_lab_bootstrap}" in compose
+    assert "PGUSER=${TARGET_WORKLOAD_USER:-dbtune_workload}" in compose
+    assert "PG_CONNECTION_STRING=postgresql://${TARGET_AGENT_USER:-dbtune_agent}" in (
+        compose
+    )
+    assert initializer.count("NOSUPERUSER NOCREATEDB NOCREATEROLE") == 4
+    assert 'GRANT pg_monitor TO :"target_agent_user"' in managed_reader
+    assert "SECURITY DEFINER" in managed_reader
+    assert "pg_catalog.pg_show_all_file_settings()" in managed_reader
+    assert "REVOKE ALL ON FUNCTION public.dbtune_file_settings() FROM PUBLIC" in (
+        managed_reader
+    )
+    assert (
+        'GRANT EXECUTE ON FUNCTION public.dbtune_file_settings() TO :"target_agent_user"'
+        in managed_reader
+    )
+    assert "ALTER SYSTEM" not in initializer
+    assert 'TO :"target_workload_user";' in initializer
+    assert '"dbtune_workload",' in soak
+    assert '"dbtune",' not in soak

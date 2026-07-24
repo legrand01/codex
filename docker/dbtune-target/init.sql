@@ -1,3 +1,42 @@
+\set ON_ERROR_STOP on
+\getenv target_agent_user POSTGRES_AGENT_USER
+\getenv target_agent_password POSTGRES_AGENT_PASSWORD
+\getenv target_workload_user POSTGRES_WORKLOAD_USER
+\getenv target_workload_password POSTGRES_WORKLOAD_PASSWORD
+
+SELECT format(
+    'CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'target_agent_user',
+    :'target_agent_password'
+)
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = :'target_agent_user'
+)
+\gexec
+
+SELECT format(
+    'CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'target_workload_user',
+    :'target_workload_password'
+)
+WHERE NOT EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = :'target_workload_user'
+)
+\gexec
+
+SELECT format(
+    'ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'target_agent_user',
+    :'target_agent_password'
+)
+\gexec
+SELECT format(
+    'ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'target_workload_user',
+    :'target_workload_password'
+)
+\gexec
+
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
 CREATE TABLE accounts (
@@ -37,3 +76,10 @@ FROM generate_series(1, 750000) AS value;
 
 CREATE INDEX sales_events_created_idx ON sales_events (created_at);
 ANALYZE;
+
+GRANT CONNECT ON DATABASE :"DBNAME" TO :"target_agent_user", :"target_workload_user";
+GRANT USAGE ON SCHEMA public TO :"target_agent_user", :"target_workload_user";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public
+TO :"target_workload_user";
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public
+TO :"target_workload_user";

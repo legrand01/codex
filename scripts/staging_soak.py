@@ -60,6 +60,162 @@ SOURCE_BUILT_SERVICES = {
     "target-host-agent",
     "worker",
 }
+TARGET_ROLE_VERIFY_SQL = """
+WITH identities AS (
+    SELECT
+        (SELECT oid FROM pg_roles WHERE rolname = 'dbtune_lab_bootstrap')
+            AS bootstrap_oid,
+        (SELECT oid FROM pg_roles WHERE rolname = 'dbtune_agent') AS agent_oid,
+        (SELECT oid FROM pg_roles WHERE rolname = 'dbtune_workload')
+            AS workload_oid,
+        to_regprocedure('public.dbtune_file_settings()') AS helper_oid,
+        to_regprocedure('pg_catalog.pg_reload_conf()') AS reload_oid,
+        to_regclass('public.accounts') AS accounts_oid,
+        to_regnamespace('public') AS public_schema_oid
+),
+observed AS (
+    SELECT
+        COALESCE((
+            SELECT rolsuper
+            FROM pg_roles
+            WHERE oid = identities.bootstrap_oid
+        ), FALSE) AS bootstrap_is_superuser,
+        COALESCE((
+            SELECT NOT (
+                rolsuper OR rolcreatedb OR rolcreaterole
+                OR rolreplication OR rolbypassrls
+            )
+            FROM pg_roles
+            WHERE oid = identities.agent_oid
+        ), FALSE) AS agent_role_safe,
+        COALESCE((
+            SELECT NOT (
+                rolsuper OR rolcreatedb OR rolcreaterole
+                OR rolreplication OR rolbypassrls
+            )
+            FROM pg_roles
+            WHERE oid = identities.workload_oid
+        ), FALSE) AS workload_role_safe,
+        ARRAY(
+            SELECT parent.rolname::TEXT
+            FROM pg_auth_members AS membership
+            JOIN pg_roles AS parent ON parent.oid = membership.roleid
+            WHERE membership.member = identities.agent_oid
+            ORDER BY parent.rolname
+        ) AS agent_memberships,
+        ARRAY(
+            SELECT parent.rolname::TEXT
+            FROM pg_auth_members AS membership
+            JOIN pg_roles AS parent ON parent.oid = membership.roleid
+            WHERE membership.member = identities.workload_oid
+            ORDER BY parent.rolname
+        ) AS workload_memberships,
+        COALESCE(has_function_privilege(
+            identities.agent_oid, identities.reload_oid, 'EXECUTE'
+        ), FALSE) AS agent_can_reload,
+        COALESCE(has_function_privilege(
+            identities.agent_oid, identities.helper_oid, 'EXECUTE'
+        ), FALSE) AS agent_can_read_file_settings,
+        COALESCE(has_table_privilege(
+            identities.agent_oid, identities.accounts_oid, 'UPDATE'
+        ), FALSE) AS agent_can_update_accounts,
+        COALESCE(has_schema_privilege(
+            identities.agent_oid, identities.public_schema_oid, 'CREATE'
+        ), FALSE) AS agent_can_create_in_public,
+        COALESCE(has_table_privilege(
+            identities.workload_oid, identities.accounts_oid, 'SELECT,UPDATE'
+        ), FALSE) AS workload_can_transact,
+        COALESCE(has_function_privilege(
+            identities.workload_oid, identities.reload_oid, 'EXECUTE'
+        ), FALSE) AS workload_can_reload,
+        COALESCE(has_function_privilege(
+            identities.workload_oid, identities.helper_oid, 'EXECUTE'
+        ), FALSE) AS workload_can_read_file_settings,
+        COALESCE(has_schema_privilege(
+            identities.workload_oid, identities.public_schema_oid, 'CREATE'
+        ), FALSE) AS workload_can_create_in_public,
+        NOT EXISTS (
+            SELECT 1
+            FROM unnest(ARRAY[
+                'work_mem',
+                'random_page_cost',
+                'seq_page_cost',
+                'checkpoint_completion_target',
+                'effective_io_concurrency',
+                'max_parallel_workers_per_gather',
+                'max_parallel_workers',
+                'max_wal_size',
+                'min_wal_size',
+                'bgwriter_lru_maxpages',
+                'bgwriter_delay',
+                'effective_cache_size',
+                'maintenance_work_mem',
+                'default_statistics_target',
+                'max_parallel_maintenance_workers',
+                'shared_buffers',
+                'max_worker_processes',
+                'wal_buffers',
+                'huge_pages'
+            ]::TEXT[]) AS parameter(name)
+            WHERE COALESCE(has_parameter_privilege(
+                identities.agent_oid, parameter.name, 'ALTER SYSTEM'
+            ), FALSE)
+        ) AS agent_has_no_alter_system,
+        COALESCE((
+            SELECT
+                procedure.prosecdef
+                AND procedure.proowner = identities.bootstrap_oid
+                AND procedure.proconfig @>
+                    ARRAY['search_path=pg_catalog, pg_temp']::TEXT[]
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM aclexplode(COALESCE(
+                        procedure.proacl,
+                        acldefault('f', procedure.proowner)
+                    )) AS privilege
+                    WHERE privilege.grantee = 0
+                      AND privilege.privilege_type = 'EXECUTE'
+                )
+            FROM pg_proc AS procedure
+            WHERE procedure.oid = identities.helper_oid
+        ), FALSE) AS helper_is_restricted
+    FROM identities
+)
+SELECT json_build_object(
+    'passed',
+        bootstrap_is_superuser
+        AND agent_role_safe
+        AND workload_role_safe
+        AND agent_memberships = ARRAY['pg_monitor']::TEXT[]
+        AND workload_memberships = ARRAY[]::TEXT[]
+        AND agent_can_reload
+        AND agent_can_read_file_settings
+        AND NOT agent_can_update_accounts
+        AND NOT agent_can_create_in_public
+        AND workload_can_transact
+        AND NOT workload_can_reload
+        AND NOT workload_can_read_file_settings
+        AND NOT workload_can_create_in_public
+        AND agent_has_no_alter_system
+        AND helper_is_restricted,
+    'bootstrap_is_superuser', bootstrap_is_superuser,
+    'agent_role_safe', agent_role_safe,
+    'agent_memberships', agent_memberships,
+    'agent_can_reload', agent_can_reload,
+    'agent_can_read_file_settings', agent_can_read_file_settings,
+    'agent_can_update_accounts', agent_can_update_accounts,
+    'agent_can_create_in_public', agent_can_create_in_public,
+    'agent_has_no_alter_system', agent_has_no_alter_system,
+    'workload_role_safe', workload_role_safe,
+    'workload_memberships', workload_memberships,
+    'workload_can_transact', workload_can_transact,
+    'workload_can_reload', workload_can_reload,
+    'workload_can_read_file_settings', workload_can_read_file_settings,
+    'workload_can_create_in_public', workload_can_create_in_public,
+    'helper_is_restricted', helper_is_restricted
+)::TEXT
+FROM observed;
+"""
 
 
 def utc_now() -> str:
@@ -119,7 +275,7 @@ def target_transaction_count() -> int | None:
             "target-postgres",
             "psql",
             "-U",
-            "dbtune",
+            "dbtune_workload",
             "-d",
             "dbtune_target",
             "-Atc",
@@ -160,6 +316,39 @@ def verify_database_roles() -> tuple[bool, dict[str, Any], str]:
             "backend.db.staging_roles",
         ],
         timeout=120,
+    )
+    detail = (result.stdout + result.stderr).strip()
+    if result.returncode:
+        return False, {}, detail
+    try:
+        evidence = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return False, {}, detail
+    return evidence.get("passed") is True, evidence, detail
+
+
+def verify_target_database_roles() -> tuple[bool, dict[str, Any], str]:
+    result = run(
+        COMPOSE
+        + [
+            "--profile",
+            "tuning-lab",
+            "exec",
+            "-T",
+            "target-postgres",
+            "psql",
+            "--no-psqlrc",
+            "--set=ON_ERROR_STOP=1",
+            "--tuples-only",
+            "--no-align",
+            "--username",
+            "dbtune_lab_bootstrap",
+            "--dbname",
+            "dbtune_target",
+            "--command",
+            TARGET_ROLE_VERIFY_SQL,
+        ],
+        timeout=60,
     )
     detail = (result.stdout + result.stderr).strip()
     if result.returncode:
@@ -672,7 +861,14 @@ def external_gates(
                     "independent_off_host_restore: "
                     "evidence.source_backup_sha256 must be 64 hex characters"
                 )
-            if evidence.get("source_host") == evidence.get("restore_host"):
+            source_host = evidence.get("source_host")
+            restore_host = evidence.get("restore_host")
+            if (
+                isinstance(source_host, str)
+                and isinstance(restore_host, str)
+                and source_host.strip().casefold()
+                == restore_host.strip().casefold()
+            ):
                 errors.append(
                     "independent_off_host_restore: source_host and restore_host "
                     "must differ"
@@ -899,6 +1095,25 @@ def main() -> None:
             "staging soak refused: control-plane database roles are not least privilege"
         )
 
+    target_roles_ok, target_role_evidence, target_role_detail = (
+        verify_target_database_roles()
+    )
+    append_jsonl(
+        events_path,
+        {
+            "kind": "preflight",
+            "timestamp": utc_now(),
+            "target_database_roles_verified": target_roles_ok,
+            "evidence": target_role_evidence,
+            "detail": target_role_detail[-2000:],
+        },
+        event_lock,
+    )
+    if not target_roles_ok:
+        raise SystemExit(
+            "staging soak refused: target database roles are not least privilege"
+        )
+
     drills = [item for item in args.drills.split(",") if item]
     drill_fractions = {
         name: (index + 1) / (len(drills) + 1)
@@ -1068,6 +1283,7 @@ def main() -> None:
         mechanics_passed = (
             interlocks_ok
             and database_roles_ok
+            and target_roles_ok
             and release_identity_unchanged
             and sampling_continuous
             and readiness_ratio >= 0.995
@@ -1125,6 +1341,8 @@ def main() -> None:
             "drill_results": list(state.drill_results.values()),
             "database_roles_verified": database_roles_ok,
             "database_role_evidence": database_role_evidence,
+            "target_database_roles_verified": target_roles_ok,
+            "target_database_role_evidence": target_role_evidence,
             "release_identity_unchanged": release_identity_unchanged,
             "release": {
                 "commit_sha": state.release_sha,

@@ -118,7 +118,9 @@ def make_policy_row(**overrides):
     return row
 
 
-def make_executor(row, target, dsn="postgresql://agent@db.example/test?sslmode=require"):
+def make_executor(
+    row, target, dsn="postgresql://agent@db.example/test?sslmode=verify-full"
+):
     async def connector(*args, **kwargs):
         return target
 
@@ -155,8 +157,19 @@ async def test_production_requires_tls_and_explicit_confirmation(monkeypatch):
     monkeypatch.setattr(settings, "production_write_enabled", True)
 
     no_tls = make_executor(row, target, dsn="postgresql://agent@db.example/test")
-    with pytest.raises(WriteInterlockError, match="must require TLS"):
+    with pytest.raises(WriteInterlockError, match="sslmode=verify-full"):
         async with no_tls.connect(row["id"], for_write=True):
+            pass
+
+    encryption_without_peer_verification = make_executor(
+        row,
+        target,
+        dsn="postgresql://agent@db.example/test?sslmode=require",
+    )
+    with pytest.raises(WriteInterlockError, match="sslmode=verify-full"):
+        async with encryption_without_peer_verification.connect(
+            row["id"], for_write=True
+        ):
             pass
 
     tls = make_executor(row, target)

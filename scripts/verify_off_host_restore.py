@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 ENVIRONMENT_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 GIT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 SAFE_DATABASE = re.compile(r"^dbtune_restore_[a-zA-Z0-9_]+$")
-ALLOWED_SSL_MODES = {"require", "verify-ca", "verify-full"}
+REQUIRED_SSL_MODE = "verify-full"
 
 
 @dataclass(frozen=True)
@@ -79,10 +79,8 @@ def parse_restore_target(dsn: str) -> RestoreTarget:
 
     query = parse_qs(parsed.query, keep_blank_values=True)
     sslmode = query.get("sslmode", [""])[-1]
-    if sslmode not in ALLOWED_SSL_MODES:
-        raise ValueError(
-            "restore DSN sslmode must be require, verify-ca, or verify-full"
-        )
+    if sslmode != REQUIRED_SSL_MODE:
+        raise ValueError("restore DSN sslmode must be verify-full")
     return RestoreTarget(
         host=host,
         port=parsed.port or 5432,

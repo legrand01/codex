@@ -60,7 +60,7 @@ class FakeManagedConnection:
     async def fetch(self, query, *args):
         if "pg_db_role_setting" in query:
             return []
-        if "pg_file_settings" in query:
+        if "dbtune_file_settings" in query:
             if "sourcefile = $1" in query:
                 return self._managed_rows()
             names = set(args[0]) if args else set()

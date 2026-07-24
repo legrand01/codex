@@ -43,6 +43,11 @@ def test_restore_target_requires_dedicated_tls_database(monkeypatch):
             "postgresql://validator:secret@restore.example/"
             "dbtune_restore_release42?sslmode=disable"
         )
+    with pytest.raises(ValueError, match="verify-full"):
+        parse_restore_target(
+            "postgresql://validator:secret@restore.example/"
+            "dbtune_restore_release42?sslmode=require"
+        )
 
     class VersionResult:
         returncode = 0

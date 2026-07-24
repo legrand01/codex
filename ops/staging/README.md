@@ -27,6 +27,12 @@ elevated role flags, runtime restrictions, or backup read-only status drift.
 Never use `POSTGRES_USER` in `CONTROL_DATABASE_URL`, `MIGRATION_DATABASE_URL`,
 or `BACKUP_DATABASE_URL`.
 
+The isolated tuning target has an independent three-role boundary:
+`dbtune_lab_bootstrap` owns only the disposable target cluster,
+`dbtune_agent` is a non-superuser with telemetry and reload access, and
+`dbtune_workload` has DML only on the synthetic lab tables. The agent and
+workload credentials must never reuse the target bootstrap credential.
+
 Run qualification only from a clean Git checkout of the intended release
 commit. The soak records that commit and the immutable image ID for every
 required running service in `run-state.json`. Resume refuses a different commit

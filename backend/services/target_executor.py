@@ -169,8 +169,10 @@ class TargetPostgresExecutor:
 
         if policy.environment == "production":
             sslmode = parse_qs(parsed.query).get("sslmode", [""])[0]
-            if sslmode not in {"require", "verify-ca", "verify-full"}:
-                raise WriteInterlockError("Production target DSN must require TLS")
+            if sslmode != "verify-full":
+                raise WriteInterlockError(
+                    "Production target DSN must use sslmode=verify-full"
+                )
 
         if for_write:
             self.assert_write_allowed(policy)
