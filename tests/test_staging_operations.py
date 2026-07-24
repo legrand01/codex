@@ -1,5 +1,6 @@
 """Production staging and soak release-gate tests."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -24,6 +25,7 @@ from scripts.staging_soak import (
     run_drill,
     running_image_manifest,
     sampling_coverage,
+    tls_peer_evidence,
     verify_database_roles,
 )
 
@@ -185,12 +187,17 @@ def test_soak_state_is_resumable(tmp_path, monkeypatch):
             "image_id": "sha256:abc",
         }
     }
+    tls_peer = {
+        "hostname": "staging.dbtune.example",
+        "certificate_sha256": "b" * 64,
+    }
     initial = SoakState.load_or_create(
         state_path,
         86400,
         resume=False,
         release={"commit_sha": "abc123", "branch": "codex/release"},
         images=images,
+        tls_peer=tls_peer,
     )
     initial.completed_drills.append("worker_restart")
     initial.drill_results["worker_restart"] = {"passed": True}
@@ -212,6 +219,7 @@ def test_soak_state_is_resumable(tmp_path, monkeypatch):
     assert restored.release_sha == "abc123"
     assert restored.release_branch == "codex/release"
     assert restored.image_manifest == images
+    assert restored.tls_peer == tls_peer
     assert not state_path.with_suffix(".json.tmp").exists()
 
 
@@ -374,6 +382,7 @@ def test_external_gates_are_structured_and_bound_to_release(tmp_path):
         path,
         expected_release_sha=release_sha,
         expected_hostname="staging.dbtune.example",
+        expected_certificate_sha256="b" * 64,
     )
 
     assert complete is True
@@ -410,6 +419,18 @@ def test_external_gates_are_structured_and_bound_to_release(tmp_path):
         path,
         expected_release_sha=release_sha,
         expected_hostname="staging.dbtune.example",
+        expected_certificate_sha256="e" * 64,
+    )
+    assert complete is False
+    assert payload["validation_errors"] == [
+        "real_tls: evidence.certificate_sha256 does not match "
+        "the observed peer certificate"
+    ]
+
+    complete, payload = external_gates(
+        path,
+        expected_release_sha=release_sha,
+        expected_hostname="staging.dbtune.example",
         earliest_verified_at=datetime(2026, 7, 24, 9, tzinfo=timezone.utc),
         staffed_not_before=datetime(2026, 7, 25, 9, tzinfo=timezone.utc),
         now=datetime(2026, 7, 25, 10, tzinfo=timezone.utc),
@@ -429,6 +450,56 @@ def test_production_tls_mode_rejects_insecure_and_loopback_urls():
     assert production_tls_mode("http://staging.dbtune.example", False) is False
     assert production_tls_mode("https://127.0.0.1:18443", False) is False
     assert production_tls_mode("https://localhost:18443", False) is False
+
+
+def test_tls_peer_evidence_records_verified_certificate(monkeypatch):
+    certificate_der = b"test-certificate-der"
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    class FakeTlsConnection(FakeConnection):
+        def getpeercert(self, binary_form=False):
+            if binary_form:
+                return certificate_der
+            return {
+                "issuer": ((("commonName", "Example CA"),),),
+                "notAfter": "Jul 25 00:00:00 2027 GMT",
+            }
+
+    class FakeContext:
+        def wrap_socket(self, connection, server_hostname):
+            assert isinstance(connection, FakeConnection)
+            assert server_hostname == "staging.dbtune.example"
+            return FakeTlsConnection()
+
+    monkeypatch.setattr(
+        "scripts.staging_soak.socket.create_connection",
+        lambda address, timeout: FakeConnection(),
+    )
+    monkeypatch.setattr(
+        "scripts.staging_soak.ssl.create_default_context",
+        lambda: FakeContext(),
+    )
+
+    passed, evidence, detail = tls_peer_evidence(
+        "https://staging.dbtune.example",
+        insecure=False,
+    )
+
+    assert passed is True
+    assert evidence == {
+        "hostname": "staging.dbtune.example",
+        "port": "443",
+        "certificate_sha256": hashlib.sha256(certificate_der).hexdigest(),
+        "issuer": "commonName=Example CA",
+        "not_after": "Jul 25 00:00:00 2027 GMT",
+    }
+    assert detail == ""
 
 
 def test_json_drill_keeps_complete_structured_evidence(tmp_path, monkeypatch):

@@ -32,7 +32,9 @@ commit. The soak records that commit and the immutable image ID for every
 required running service in `run-state.json`. Resume refuses a different commit
 or image manifest, and the final mechanics decision fails if the checkout
 becomes dirty or any service is recreated from a different image during the
-observation window.
+observation window. For a production URL it also performs normal CA and
+hostname verification, records the live peer certificate SHA-256 fingerprint,
+and requires that fingerprint to remain stable and match the operator evidence.
 
 Initialize real staging:
 

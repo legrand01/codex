@@ -88,7 +88,7 @@ caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
 
 ## Automated release evidence
 
-- Backend: 648 passed, 5 skipped.
+- Backend: 649 passed, 5 skipped.
 - Ruff: passed.
 - Strict type checking for the new staging/release modules: passed.
 - Frontend lint and production build: passed.
@@ -109,7 +109,8 @@ corrected release artifact.
    least 24 hours in an isolated routable staging host using real TLS and a
    real paging webhook. Its `summary.json` must include a passing structured
    database-role verification plus an unchanged clean commit and immutable
-   running-image manifest.
+   running-image manifest, along with an automatically verified stable TLS peer
+   fingerprint matching the operator evidence.
 2. Copy a backup off-host and restore it on an independent PostgreSQL instance.
 3. Burn down the explicitly captured strict typing debt. A full
    `mypy backend host_agent` currently reports 398 errors in 58 files.

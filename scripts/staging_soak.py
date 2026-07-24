@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import ipaddress
 import json
 import math
 import re
+import socket
 import ssl
 import subprocess
 import threading
@@ -16,7 +18,7 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -356,6 +358,7 @@ class SoakState:
     release_sha: str = ""
     release_branch: str | None = None
     image_manifest: dict[str, dict[str, str]] = field(default_factory=dict)
+    tls_peer: dict[str, str] = field(default_factory=dict)
     samples_total: int = 0
     ready_samples: int = 0
     max_transactions: int | None = None
@@ -372,6 +375,7 @@ class SoakState:
         resume: bool,
         release: dict[str, Any] | None = None,
         images: dict[str, dict[str, str]] | None = None,
+        tls_peer: dict[str, str] | None = None,
     ) -> "SoakState":
         if resume and path.exists():
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -394,6 +398,7 @@ class SoakState:
                 release_branch if isinstance(release_branch, str) else None
             ),
             image_manifest=images or {},
+            tls_peer=tls_peer or {},
             max_transactions=baseline,
         )
 
@@ -460,6 +465,49 @@ def production_tls_mode(base_url: str, insecure: bool) -> bool:
         return True
 
 
+def tls_peer_evidence(
+    base_url: str,
+    insecure: bool,
+) -> tuple[bool, dict[str, str], str]:
+    if not production_tls_mode(base_url, insecure):
+        return False, {}, "production TLS mode is not enabled"
+    parsed = urlparse(base_url)
+    hostname = parsed.hostname
+    if hostname is None:
+        return False, {}, "qualified URL has no hostname"
+    port = parsed.port or 443
+    try:
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, port), timeout=10) as connection:
+            with context.wrap_socket(
+                connection,
+                server_hostname=hostname,
+            ) as tls_connection:
+                certificate_der = tls_connection.getpeercert(binary_form=True)
+                certificate = tls_connection.getpeercert()
+        if not certificate_der or not isinstance(certificate, dict):
+            return False, {}, "TLS peer did not provide a certificate"
+        issuer_data = cast(
+            tuple[tuple[tuple[str, str], ...], ...],
+            certificate.get("issuer", ()),
+        )
+        issuer = ", ".join(
+            f"{name}={value}"
+            for relative_name in issuer_data
+            for name, value in relative_name
+        )
+        evidence = {
+            "hostname": hostname,
+            "port": str(port),
+            "certificate_sha256": hashlib.sha256(certificate_der).hexdigest(),
+            "issuer": issuer,
+            "not_after": str(certificate.get("notAfter", "")),
+        }
+        return True, evidence, ""
+    except Exception as exc:
+        return False, {}, f"{type(exc).__name__}: {exc}"
+
+
 def _parse_evidence_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -478,6 +526,7 @@ def external_gates(
     path: Path | None,
     expected_release_sha: str | None = None,
     expected_hostname: str | None = None,
+    expected_certificate_sha256: str | None = None,
     earliest_verified_at: datetime | None = None,
     staffed_not_before: datetime | None = None,
     now: datetime | None = None,
@@ -594,6 +643,14 @@ def external_gates(
                 errors.append(
                     "real_tls: evidence.certificate_sha256 must be 64 hex characters"
                 )
+            elif (
+                expected_certificate_sha256 is not None
+                and certificate_sha.lower() != expected_certificate_sha256.lower()
+            ):
+                errors.append(
+                    "real_tls: evidence.certificate_sha256 does not match "
+                    "the observed peer certificate"
+                )
         elif gate == "independent_off_host_restore":
             backup_sha = evidence.get("source_backup_sha256")
             if not isinstance(backup_sha, str) or not SHA256_PATTERN.fullmatch(
@@ -672,6 +729,7 @@ def main() -> None:
         raise SystemExit("--duration-hours must be greater than 0 and no more than 72")
     if args.interval_seconds < 1:
         raise SystemExit("--interval-seconds must be at least 1")
+    secure_transport = production_tls_mode(args.base_url, args.insecure)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     events_path = args.output_dir / "events.jsonl"
@@ -716,21 +774,43 @@ def main() -> None:
             "staging soak refused: required services or image identities are missing"
         )
 
+    tls_ok, initial_tls_peer, tls_detail = tls_peer_evidence(
+        args.base_url,
+        args.insecure,
+    )
+    append_jsonl(
+        events_path,
+        {
+            "kind": "preflight",
+            "timestamp": utc_now(),
+            "tls_peer_verified": tls_ok,
+            "evidence": initial_tls_peer,
+            "detail": tls_detail,
+        },
+        event_lock,
+    )
+    if secure_transport and not tls_ok:
+        raise SystemExit(
+            "staging soak refused: production TLS peer verification failed"
+        )
+
     state = SoakState.load_or_create(
         state_path,
         duration_seconds,
         args.resume,
         release=release_evidence,
         images=image_manifest,
+        tls_peer=initial_tls_peer,
     )
     if args.resume and abs(state.requested_duration_seconds - duration_seconds) > 1:
         raise SystemExit("resume duration differs from the persisted soak duration")
     if args.resume and (
         state.release_sha != release_evidence["commit_sha"]
         or state.image_manifest != image_manifest
+        or state.tls_peer != initial_tls_peer
     ):
         raise SystemExit(
-            "resume release identity differs from the persisted commit or images"
+            "resume identity differs from the persisted commit, images, or TLS peer"
         )
     state.save(state_path)
     state_lock = threading.Lock()
@@ -858,6 +938,15 @@ def main() -> None:
         final_images_ok, final_image_manifest, final_image_detail = (
             running_image_manifest(expected_release_sha=state.release_sha)
         )
+        final_tls_ok, final_tls_peer, final_tls_detail = tls_peer_evidence(
+            args.base_url,
+            args.insecure,
+        )
+        tls_peer_unchanged = (
+            secure_transport
+            and final_tls_ok
+            and final_tls_peer == state.tls_peer
+        )
         release_identity_unchanged = (
             final_release_ok
             and final_images_ok
@@ -872,9 +961,14 @@ def main() -> None:
                 "verified": release_identity_unchanged,
                 "release": final_release_evidence,
                 "images": final_image_manifest,
+                "tls_peer": final_tls_peer,
                 "detail": "\n".join(
                     detail
-                    for detail in (final_release_detail, final_image_detail[-2000:])
+                    for detail in (
+                        final_release_detail,
+                        final_image_detail[-2000:],
+                        final_tls_detail,
+                    )
                     if detail
                 ),
             },
@@ -932,11 +1026,11 @@ def main() -> None:
         )
         qualification_seconds = args.qualification_hours * 3600
         qualification_complete = elapsed >= qualification_seconds
-        secure_transport = production_tls_mode(args.base_url, args.insecure)
         external_complete, external_evidence = external_gates(
             args.external_evidence,
             expected_release_sha=state.release_sha,
             expected_hostname=urlparse(args.base_url).hostname,
+            expected_certificate_sha256=state.tls_peer.get("certificate_sha256"),
             earliest_verified_at=datetime.fromtimestamp(
                 state.started_at_epoch,
                 timezone.utc,
@@ -946,7 +1040,7 @@ def main() -> None:
                 timezone.utc,
             ),
         )
-        external_complete = external_complete and secure_transport
+        external_complete = external_complete and tls_peer_unchanged
         decision = classify_decision(
             mechanics_passed,
             qualification_complete,
@@ -987,6 +1081,8 @@ def main() -> None:
                 "worktree_clean": final_release_evidence.get("worktree_clean"),
             },
             "image_manifest": state.image_manifest,
+            "tls_peer": state.tls_peer,
+            "tls_peer_unchanged": tls_peer_unchanged,
             "mechanics_passed": mechanics_passed,
             "external_gates_complete": external_complete,
             "external_evidence": external_evidence,
