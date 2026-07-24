@@ -30,7 +30,7 @@ dev = [
     "hypothesis>=6.92.0",
     "httpx>=0.25.0",
     "ruff>=0.1.0",
-    "mypy>=1.7.0",
+    "mypy==1.19.1",
 ]
 
 [tool.hatch.build.targets.wheel]

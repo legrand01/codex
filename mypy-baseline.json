@@ -1,0 +1,976 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "mypy",
+    "--show-error-codes",
+    "--no-error-summary",
+    "backend",
+    "host_agent"
+  ],
+  "error_count": 398,
+  "fingerprints": [
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/baselines.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 3,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/baselines.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/candidates.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/candidates.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/configurations.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 5,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/configurations.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 3,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/demo.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/demo.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/events.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/evidence.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 6,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/evidence.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 3,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/api/evidence.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 2,
+      "message": "Returning Any from function declared to return \"WorkloadFingerprint\"",
+      "path": "backend/api/fingerprints.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 3,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/fingerprints.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 9,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/fingerprints.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/fleet.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 12,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/fleet.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"Dict\"",
+      "path": "backend/api/fleet.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/parameter_catalog.py"
+    },
+    {
+      "code": "no-untyped-call",
+      "count": 3,
+      "message": "Call to untyped function \"_parse_json_field\" in typed context",
+      "path": "backend/api/plans.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation",
+      "path": "backend/api/plans.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 7,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/plans.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 2,
+      "message": "Missing type parameters for generic type \"list\"",
+      "path": "backend/api/plans.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 3,
+      "message": "Argument 1 to \"append\" of \"list\" has incompatible type \"datetime\"; expected \"UUID\"",
+      "path": "backend/api/reports.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"append\" of \"list\" has incompatible type \"int\"; expected \"UUID\"",
+      "path": "backend/api/reports.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"append\" of \"list\" has incompatible type \"str\"; expected \"UUID\"",
+      "path": "backend/api/reports.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 7,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/api/reports.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/api/rollback.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/runs.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 7,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/api/runs.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/api/runs.py"
+    },
+    {
+      "code": "no-untyped-call",
+      "count": 1,
+      "message": "Call to untyped function \"FleetConnectionManager\" in typed context",
+      "path": "backend/api/ws_fleet.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/api/ws_fleet.py"
+    },
+    {
+      "code": "import-untyped",
+      "count": 1,
+      "message": "Skipping analyzing \"asyncpg\": module is installed, but missing library stubs or py.typed marker",
+      "path": "backend/db/init_db.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"list\"",
+      "path": "backend/db/init_db.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"set\"",
+      "path": "backend/db/init_db.py"
+    },
+    {
+      "code": "import-untyped",
+      "count": 1,
+      "message": "Skipping analyzing \"asyncpg\": module is installed, but missing library stubs or py.typed marker",
+      "path": "backend/db/pool.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"xread\" of \"StreamCommands\" has incompatible type \"dict[str, str]\"; expected \"dict[Union[bytes, str, memoryview[int]], Union[int, Union[bytes, str, memoryview[int]]]]\"",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 2 to \"xadd\" of \"StreamCommands\" has incompatible type \"dict[str, str]\"; expected \"dict[Union[Union[bytes, bytearray, memoryview[int]], Union[str, int, float]], Union[Union[bytes, bytearray, memoryview[int]], Union[str, int, float]]]\"",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 3 to \"xreadgroup\" of \"StreamCommands\" has incompatible type \"dict[str, str]\"; expected \"dict[Union[bytes, str, memoryview[int]], Union[int, Union[bytes, str, memoryview[int]]]]\"",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 2,
+      "message": "Returning Any from function declared to return \"int\"",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 2,
+      "message": "Returning Any from function declared to return \"list[Any]\"",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 1,
+      "message": "Returning Any from function declared to return \"str\"",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "no-untyped-call",
+      "count": 1,
+      "message": "Call to untyped function \"from_url\" in typed context",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"Callable\"",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 2,
+      "message": "Missing type parameters for generic type \"List\"",
+      "path": "backend/db/redis_manager.py"
+    },
+    {
+      "code": "import-untyped",
+      "count": 1,
+      "message": "Skipping analyzing \"asyncpg\": module is installed, but missing library stubs or py.typed marker",
+      "path": "backend/db/repository.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 1,
+      "message": "Returning Any from function declared to return \"int\"",
+      "path": "backend/db/repository.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 1,
+      "message": "Returning Any from function declared to return \"list[Any]\"",
+      "path": "backend/db/repository.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 2,
+      "message": "Returning Any from function declared to return \"str\"",
+      "path": "backend/db/repository.py"
+    },
+    {
+      "code": "import-untyped",
+      "count": 1,
+      "message": "Skipping analyzing \"asyncpg\": module is installed, but missing library stubs or py.typed marker",
+      "path": "backend/dependencies.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 7,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/main.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/main.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/models/audit.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/models/evidence.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 4,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/models/plans.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 7,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/models/reports.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 1,
+      "message": "Returning Any from function declared to return \"Principal\"",
+      "path": "backend/security.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/security.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/security.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/agent_leases.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"_quote_identifier_path\" has incompatible type \"Union[bool, str, Any]\"; expected \"str\"",
+      "path": "backend/services/ai_planning.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"_safe_identifier_part\" has incompatible type \"Union[bool, str, Any]\"; expected \"str\"",
+      "path": "backend/services/ai_planning.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"update\" of \"set\" has incompatible type \"object\"; expected \"Iterable[Any]\"",
+      "path": "backend/services/ai_planning.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"None\", variable has type \"dict[str, Union[bool, str, Any]]\")",
+      "path": "backend/services/ai_planning.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/ai_planning.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 18,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/services/ai_planning.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"tuple\"",
+      "path": "backend/services/ai_planning.py"
+    },
+    {
+      "code": "var-annotated",
+      "count": 1,
+      "message": "Need type annotation for \"all_gaps\" (hint: \"all_gaps: set[<type>] = ...\")",
+      "path": "backend/services/ai_planning.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"append\" of \"list\" has incompatible type \"datetime\"; expected \"UUID\"",
+      "path": "backend/services/audit_logger.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 2,
+      "message": "Argument 1 to \"append\" of \"list\" has incompatible type \"int\"; expected \"UUID\"",
+      "path": "backend/services/audit_logger.py"
+    },
+    {
+      "code": "no-untyped-call",
+      "count": 1,
+      "message": "Call to untyped function \"AuditLogger\" in typed context",
+      "path": "backend/services/audit_logger.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/audit_logger.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation",
+      "path": "backend/services/audit_logger.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/audit_logger.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"Dict\"",
+      "path": "backend/services/audit_logger.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 5,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/baseline_measurement.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/baseline_measurement.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/services/baseline_measurement.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/candidate_optimizer.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/candidate_optimizer.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 3,
+      "message": "Argument 2 to \"ExecutionResult\" has incompatible type \"object\"; expected \"list[str]\"",
+      "path": "backend/services/configuration_backends.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 1,
+      "message": "Returning Any from function declared to return \"UUID\"",
+      "path": "backend/services/configuration_backends.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 7,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/configuration_backends.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 9,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/configuration_backends.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 11,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/services/configuration_backends.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"Optional[dict[str, Any]]\", variable has type \"dict[str, Any]\")",
+      "path": "backend/services/durable_run_orchestrator.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"dict[Any, Any]\", variable has type \"CandidateDecision\")",
+      "path": "backend/services/durable_run_orchestrator.py"
+    },
+    {
+      "code": "index",
+      "count": 1,
+      "message": "Value of type \"CandidateDecision\" is not indexable",
+      "path": "backend/services/durable_run_orchestrator.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/durable_run_orchestrator.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/durable_run_orchestrator.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"append\" of \"list\" has incompatible type \"UUID\"; expected \"Union[datetime, str]\"",
+      "path": "backend/services/fleet_service.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 2,
+      "message": "Missing type parameters for generic type \"Dict\"",
+      "path": "backend/services/fleet_service.py"
+    },
+    {
+      "code": "no-untyped-call",
+      "count": 1,
+      "message": "Call to untyped function \"_run_checks\" in typed context",
+      "path": "backend/services/guardrail_engine.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/guardrail_engine.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 5,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/guardrail_engine.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 19,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/services/guardrail_engine.py"
+    },
+    {
+      "code": "no-untyped-call",
+      "count": 3,
+      "message": "Call to untyped function \"_update_heartbeat\" in typed context",
+      "path": "backend/services/loop_worker.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/loop_worker.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/loop_worker.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 12,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/services/loop_worker.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 3,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/operational_events.py"
+    },
+    {
+      "code": "arg-type",
+      "count": 1,
+      "message": "Argument 1 to \"wait_for\" has incompatible type \"Union[Awaitable[bool], bool]\"; expected \"Union[Future[bool], Generator[Any, None, bool], Awaitable[bool]]\"",
+      "path": "backend/services/operational_health.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/parameter_catalog.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 3,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/parameter_catalog.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/plan_execution.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/plan_execution.py"
+    },
+    {
+      "code": "no-untyped-call",
+      "count": 11,
+      "message": "Call to untyped function \"_decode_json\" in typed context",
+      "path": "backend/services/report_generator.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/report_generator.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation",
+      "path": "backend/services/report_generator.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/report_generator.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 18,
+      "message": "Missing type parameters for generic type \"Dict\"",
+      "path": "backend/services/report_generator.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/rollback_service.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"Dict\"",
+      "path": "backend/services/rollback_service.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"List\"",
+      "path": "backend/services/rollback_service.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 5,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/services/rollback_service.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 1,
+      "message": "Returning Any from function declared to return \"bool\"",
+      "path": "backend/services/run_queue.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/run_queue.py"
+    },
+    {
+      "code": "assignment",
+      "count": 1,
+      "message": "Incompatible types in assignment (expression has type \"None\", variable has type \"list[str]\")",
+      "path": "backend/services/target_executor.py"
+    },
+    {
+      "code": "import-untyped",
+      "count": 1,
+      "message": "Skipping analyzing \"asyncpg\": module is installed, but missing library stubs or py.typed marker",
+      "path": "backend/services/target_executor.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 5,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/target_executor.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 3,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "backend/services/target_executor.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/tuning_preflight.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 3,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/services/verification.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 4,
+      "message": "Missing type parameters for generic type \"Dict\"",
+      "path": "backend/services/verification.py"
+    },
+    {
+      "code": "var-annotated",
+      "count": 1,
+      "message": "Need type annotation for \"all_keys\" (hint: \"all_keys: set[<type>] = ...\")",
+      "path": "backend/services/verification.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a return type annotation",
+      "path": "backend/services/workload_fingerprints.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "backend/workers/run_worker.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"buffer\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.locks_collector\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.os_metrics_collector\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.pg_settings_collector\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.pg_stats_collector\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.replication_collector\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.wal_checkpoint_collector\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"config\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"managed_conf\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "import-untyped",
+      "count": 1,
+      "message": "Skipping analyzing \"asyncpg\": module is installed, but missing library stubs or py.typed marker",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 6,
+      "message": "Returning Any from function declared to return \"Optional[dict[str, Any]]\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "no-any-return",
+      "count": 3,
+      "message": "Returning Any from function declared to return \"dict[str, Any]\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 1,
+      "message": "Missing type parameters for generic type \"Task\"",
+      "path": "host_agent/agent.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 2,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "host_agent/buffer.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 5,
+      "message": "Missing type parameters for generic type \"dict\"",
+      "path": "host_agent/buffer.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.locks_collector\"",
+      "path": "host_agent/collectors/__init__.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.os_metrics_collector\"",
+      "path": "host_agent/collectors/__init__.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.pg_settings_collector\"",
+      "path": "host_agent/collectors/__init__.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.pg_stats_collector\"",
+      "path": "host_agent/collectors/__init__.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.replication_collector\"",
+      "path": "host_agent/collectors/__init__.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"collectors.wal_checkpoint_collector\"",
+      "path": "host_agent/collectors/__init__.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "host_agent/collectors/locks_collector.py"
+    },
+    {
+      "code": "import-untyped",
+      "count": 1,
+      "message": "Library stubs not installed for \"psutil\"",
+      "path": "host_agent/collectors/os_metrics_collector.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "host_agent/collectors/pg_settings_collector.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "host_agent/collectors/pg_stats_collector.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "host_agent/collectors/replication_collector.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "host_agent/collectors/wal_checkpoint_collector.py"
+    },
+    {
+      "code": "import-not-found",
+      "count": 1,
+      "message": "Cannot find implementation or library stub for module named \"managed_conf\"",
+      "path": "host_agent/live_managed_conf_check.py"
+    },
+    {
+      "code": "import-untyped",
+      "count": 1,
+      "message": "Skipping analyzing \"asyncpg\": module is installed, but missing library stubs or py.typed marker",
+      "path": "host_agent/live_managed_conf_check.py"
+    },
+    {
+      "code": "no-untyped-def",
+      "count": 1,
+      "message": "Function is missing a type annotation for one or more arguments",
+      "path": "host_agent/managed_conf.py"
+    },
+    {
+      "code": "type-arg",
+      "count": 2,
+      "message": "Missing type parameters for generic type \"tuple\"",
+      "path": "host_agent/managed_conf.py"
+    }
+  ],
+  "mypy_version": "1.19.1",
+  "schema_version": 1
+}

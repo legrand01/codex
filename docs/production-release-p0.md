@@ -92,9 +92,18 @@ Start the API, worker, frontend, Redis, and control-plane PostgreSQL. Verify:
 docker compose config -q
 venv/bin/ruff check backend host_agent tests
 venv/bin/python -m pytest -q
+venv/bin/python scripts/check_mypy_baseline.py
 npm --prefix frontend run build
 RUN_P0_TARGET_INTEGRATION=1 venv/bin/python -m pytest -q tests/test_p0_target_integration.py -s
 ```
+
+The repository-wide mypy check is an exact debt baseline, not a waiver for new
+typing defects. It runs pinned mypy 1.19.1 and fails if any fingerprint is
+added, removed, or changed. When a reviewed change fixes existing debt, update
+the baseline in the same commit with
+`venv/bin/python scripts/check_mypy_baseline.py --update`; inspect the complete
+diff before accepting it. New production staging modules must also pass the
+separate strict, baseline-free CI check.
 
 Confirm authenticated HTTP and WebSocket access, tenant isolation, host
 heartbeats, fresh evidence, worker lease heartbeats, and an approved dry-run on a

@@ -110,9 +110,12 @@ corrected release artifact.
    real paging webhook. Its `summary.json` must include a passing structured
    database-role verification.
 2. Copy a backup off-host and restore it on an independent PostgreSQL instance.
-3. Resolve or explicitly baseline the existing strict typing debt: a full
-   `mypy backend host_agent` currently reports 398 errors in 58 files. The CI
-   gate currently type-checks only the new production staging modules.
+3. Burn down the explicitly captured strict typing debt. A full
+   `mypy backend host_agent` currently reports 398 errors in 58 files.
+   `mypy-baseline.json` records exact file, error-code, and normalized-message
+   fingerprints under pinned mypy 1.19.1; CI rejects every unreviewed addition,
+   removal, or change while new production staging modules remain strictly
+   type-checked with no baseline.
 4. Obtain a staffed go/no-go approval. Initial scope must remain one
    self-managed PostgreSQL target, reload-only settings, and human approval for
    every candidate. Provider-managed adapters and restart-context settings are
