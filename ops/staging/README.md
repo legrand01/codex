@@ -11,6 +11,22 @@ real alert receiver, and storage outside the host for copied backup artifacts.
 Only TCP 443 should be exposed. The API, PostgreSQL, Redis, Prometheus, and
 Alertmanager ports bind to loopback or the private Compose network.
 
+`staging_init.py` generates four distinct PostgreSQL credentials:
+
+- `dbtune_bootstrap` initializes the cluster and runs only the idempotent role
+  provisioning job;
+- `dbtune_migrator` owns the database, schema, tables, sequences, and functions;
+- `dbtune_runtime` is the API/worker login and receives DML plus sequence access,
+  but no object ownership, schema creation, migration-history writes, or audit
+  mutation;
+- `dbtune_backup` inherits `pg_read_all_data` and has no write privileges.
+
+The role initializer runs before migrations, migrations run as
+`dbtune_migrator`, and a post-migration verifier fails startup if ownership,
+elevated role flags, runtime restrictions, or backup read-only status drift.
+Never use `POSTGRES_USER` in `CONTROL_DATABASE_URL`, `MIGRATION_DATABASE_URL`,
+or `BACKUP_DATABASE_URL`.
+
 Initialize real staging:
 
 ```bash
@@ -102,10 +118,12 @@ venv/bin/python scripts/staging_soak.py \
 least 99.5% successful readiness samples, ongoing target transaction progress,
 at least 99.5% of the expected sampling cadence, no sampling gap longer than
 three intervals (or 60 seconds, whichever is greater), disabled control-plane
-write interlocks, all automatic drills passing, and all four external evidence
-gates. This prevents host sleep or a stopped monitor from being counted as
-successful soak time. It reports `PENDING_EXTERNAL_GATES` rather than silently
-treating local alert or restore mechanics as production proof.
+write interlocks, a passing structured database-role verification, all
+automatic drills passing, and all four external evidence gates. This prevents
+host sleep, a stopped monitor, or a privileged runtime/backup credential from
+being counted as successful soak time. It reports `PENDING_EXTERNAL_GATES`
+rather than silently treating local alert or restore mechanics as production
+proof.
 
 Release remains **NO-GO** if any of the following are true:
 
@@ -113,6 +131,8 @@ Release remains **NO-GO** if any of the following are true:
 - restore has not been proven on an independent database;
 - alert delivery has not been acknowledged;
 - TLS, least-privilege credentials, or backup retention are placeholders;
+- the API, worker, migration, backup, and cluster-bootstrap processes share a
+  PostgreSQL login, or any non-bootstrap login is a superuser;
 - the 24-hour minimum has not elapsed;
 - provider-managed targets or restart-context changes are in the launch scope.
 

@@ -6,7 +6,7 @@ import argparse
 import json
 import subprocess
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,6 +57,57 @@ def validate_workload_bounds(
     return failures
 
 
+def validate_database_roles(values: dict[str, str]) -> list[str]:
+    failures: list[str] = []
+    bootstrap_user = values.get("POSTGRES_USER", "")
+    if bootstrap_user != "dbtune_bootstrap":
+        failures.append("POSTGRES_USER must be the dedicated dbtune_bootstrap role")
+
+    role_specs = {
+        "MIGRATION_DATABASE_URL": (
+            "dbtune_migrator",
+            "POSTGRES_MIGRATION_PASSWORD",
+        ),
+        "CONTROL_DATABASE_URL": (
+            "dbtune_runtime",
+            "POSTGRES_RUNTIME_PASSWORD",
+        ),
+        "BACKUP_DATABASE_URL": (
+            "dbtune_backup",
+            "POSTGRES_BACKUP_PASSWORD",
+        ),
+    }
+    usernames: list[str] = []
+    passwords = [values.get("POSTGRES_PASSWORD", "")]
+    expected_database = values.get("POSTGRES_DB", "")
+    for dsn_key, (expected_user, password_key) in role_specs.items():
+        password = values.get(password_key, "")
+        passwords.append(password)
+        if len(password) < 24 or "CHANGE_ME" in password:
+            failures.append(f"{password_key} must contain at least 24 random characters")
+
+        dsn = values.get(dsn_key, "")
+        parsed = urlparse(dsn)
+        username = unquote(parsed.username or "")
+        dsn_password = unquote(parsed.password or "")
+        database = parsed.path.lstrip("/")
+        usernames.append(username)
+        if parsed.scheme not in {"postgresql", "postgres"}:
+            failures.append(f"{dsn_key} must be a PostgreSQL DSN")
+        if "CHANGE_ME" in dsn or username != expected_user:
+            failures.append(f"{dsn_key} must use the dedicated {expected_user} role")
+        if dsn_password != password:
+            failures.append(f"{dsn_key} password must match {password_key}")
+        if database != expected_database:
+            failures.append(f"{dsn_key} must connect to POSTGRES_DB")
+
+    if len(set(usernames + [bootstrap_user])) != 4:
+        failures.append("bootstrap, migrator, runtime, and backup roles must be distinct")
+    if any(not password for password in passwords) or len(set(passwords)) != 4:
+        failures.append("all database roles must use distinct non-empty passwords")
+    return failures
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env.staging")
@@ -69,6 +120,7 @@ def main() -> None:
         raise SystemExit(f"missing {args.env_file}; run scripts/staging_init.py")
     values = load_env(args.env_file)
     failures.extend(validate_workload_bounds(values, allow_local=args.allow_local))
+    failures.extend(validate_database_roles(values))
 
     expected = {
         "ENVIRONMENT": "production",
@@ -90,11 +142,6 @@ def main() -> None:
     token = values.get("BOOTSTRAP_ADMIN_TOKEN", "")
     if len(token) < 32 or "CHANGE_ME" in token:
         failures.append("BOOTSTRAP_ADMIN_TOKEN must contain at least 32 random characters")
-    database_url = values.get("CONTROL_DATABASE_URL", "")
-    if "postgres:postgres@" in database_url or "CHANGE_ME" in database_url:
-        failures.append("CONTROL_DATABASE_URL still contains default or placeholder credentials")
-    if urlparse(database_url).scheme not in {"postgresql", "postgres"}:
-        failures.append("CONTROL_DATABASE_URL must be a PostgreSQL DSN")
     redis_password = values.get("REDIS_PASSWORD", "")
     if len(redis_password) < 24 or "CHANGE_ME" in redis_password:
         failures.append("REDIS_PASSWORD must contain at least 24 random characters")
@@ -141,7 +188,10 @@ def main() -> None:
         for failure in failures:
             print(f"  - {failure}")
         raise SystemExit(1)
-    print("Staging preflight passed: secrets, TLS, alert route, auth, and write interlocks")
+    print(
+        "Staging preflight passed: secrets, TLS, alert route, auth, "
+        "database role separation, and write interlocks"
+    )
 
 
 if __name__ == "__main__":

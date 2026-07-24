@@ -31,6 +31,7 @@ jobs:
           scripts/staging_drills.py
           scripts/drill_regression_rollback.py
           scripts/staging_soak.py
+          backend/db/staging_roles.py
       - name: Python dependency audit
         run: |
           python -m pip install pip-audit
@@ -63,10 +64,15 @@ jobs:
         env:
           CORS_ORIGINS: '["https://staging.example"]'
           BOOTSTRAP_ADMIN_TOKEN: test-only-token-that-is-longer-than-32-characters
-          POSTGRES_USER: dbtune_control
+          POSTGRES_USER: dbtune_bootstrap
           POSTGRES_PASSWORD: test-only-password-that-is-long
           POSTGRES_DB: dba_agent
-          CONTROL_DATABASE_URL: postgresql://dbtune_control:test@postgres:5432/dba_agent
+          POSTGRES_MIGRATION_PASSWORD: test-only-migration-password-that-is-long
+          POSTGRES_RUNTIME_PASSWORD: test-only-runtime-password-that-is-long
+          POSTGRES_BACKUP_PASSWORD: test-only-backup-password-that-is-long
+          MIGRATION_DATABASE_URL: postgresql://dbtune_migrator:test-only-migration-password-that-is-long@postgres:5432/dba_agent
+          CONTROL_DATABASE_URL: postgresql://dbtune_runtime:test-only-runtime-password-that-is-long@postgres:5432/dba_agent
+          BACKUP_DATABASE_URL: postgresql://dbtune_backup:test-only-backup-password-that-is-long@postgres:5432/dba_agent
           REDIS_PASSWORD: test-only-redis-password-that-is-long
           CONTROL_REDIS_URL: redis://:test-only-redis-password-that-is-long@redis:6379/0
         run: >-

@@ -88,7 +88,7 @@ caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
 
 ## Automated release evidence
 
-- Backend: 637 passed, 5 skipped.
+- Backend: 641 passed, 5 skipped.
 - Ruff: passed.
 - Strict type checking for the new staging/release modules: passed.
 - Frontend lint and production build: passed.
@@ -101,11 +101,17 @@ caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
 
 ## Remaining production blockers
 
-1. Run the same release candidate continuously for at least 24 hours in an
-   isolated routable staging host using real TLS and a real paging webhook.
+The `7f39afd` local mechanics soak predates control-plane database-role
+separation. It remains useful failure-drill evidence, but cannot qualify the
+corrected release artifact.
+
+1. Run the corrected least-privilege release candidate continuously for at
+   least 24 hours in an isolated routable staging host using real TLS and a
+   real paging webhook. Its `summary.json` must include a passing structured
+   database-role verification.
 2. Copy a backup off-host and restore it on an independent PostgreSQL instance.
 3. Resolve or explicitly baseline the existing strict typing debt: a full
-   `mypy backend host_agent` currently reports 397 errors in 58 files. The CI
+   `mypy backend host_agent` currently reports 398 errors in 58 files. The CI
    gate currently type-checks only the new production staging modules.
 4. Obtain a staffed go/no-go approval. Initial scope must remain one
    self-managed PostgreSQL target, reload-only settings, and human approval for

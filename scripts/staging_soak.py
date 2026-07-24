@@ -115,6 +115,30 @@ def write_interlocks_disabled() -> tuple[bool, str]:
     return result.returncode == 0 and output.endswith("False False ''"), output
 
 
+def verify_database_roles() -> tuple[bool, dict[str, Any], str]:
+    result = run(
+        COMPOSE
+        + [
+            "run",
+            "--rm",
+            "--no-deps",
+            "migrate",
+            "python",
+            "-m",
+            "backend.db.staging_roles",
+        ],
+        timeout=120,
+    )
+    detail = (result.stdout + result.stderr).strip()
+    if result.returncode:
+        return False, {}, detail
+    try:
+        evidence = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return False, {}, detail
+    return evidence.get("passed") is True, evidence, detail
+
+
 def wait_for_ready(base_url: str, insecure: bool, timeout_seconds: int = 120) -> bool:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
@@ -334,6 +358,25 @@ def main() -> None:
     if not interlocks_ok:
         raise SystemExit("staging soak refused: worker write interlocks are not all disabled")
 
+    database_roles_ok, database_role_evidence, database_role_detail = (
+        verify_database_roles()
+    )
+    append_jsonl(
+        events_path,
+        {
+            "kind": "preflight",
+            "timestamp": utc_now(),
+            "database_roles_verified": database_roles_ok,
+            "evidence": database_role_evidence,
+            "detail": database_role_detail[-2000:],
+        },
+        event_lock,
+    )
+    if not database_roles_ok:
+        raise SystemExit(
+            "staging soak refused: control-plane database roles are not least privilege"
+        )
+
     drills = [item for item in args.drills.split(",") if item]
     drill_fractions = {
         name: (index + 1) / (len(drills) + 1)
@@ -460,6 +503,7 @@ def main() -> None:
         ) and all_drills_recorded
         mechanics_passed = (
             interlocks_ok
+            and database_roles_ok
             and sampling_continuous
             and readiness_ratio >= 0.995
             and transaction_progress
@@ -500,6 +544,8 @@ def main() -> None:
             "transaction_progress": transaction_progress,
             "completed_drills": state.completed_drills,
             "drill_results": list(state.drill_results.values()),
+            "database_roles_verified": database_roles_ok,
+            "database_role_evidence": database_role_evidence,
             "mechanics_passed": mechanics_passed,
             "external_gates_complete": external_complete,
             "external_evidence": external_evidence,

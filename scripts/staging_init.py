@@ -93,20 +93,42 @@ def main() -> None:
             if separator:
                 existing[key] = value
     password = existing.get("POSTGRES_PASSWORD") or secrets.token_urlsafe(36)
+    migration_password = existing.get(
+        "POSTGRES_MIGRATION_PASSWORD"
+    ) or secrets.token_urlsafe(36)
+    runtime_password = existing.get(
+        "POSTGRES_RUNTIME_PASSWORD"
+    ) or secrets.token_urlsafe(36)
+    backup_password = existing.get(
+        "POSTGRES_BACKUP_PASSWORD"
+    ) or secrets.token_urlsafe(36)
     redis_password = existing.get("REDIS_PASSWORD") or secrets.token_urlsafe(36)
     admin_token = existing.get("BOOTSTRAP_ADMIN_TOKEN") or secrets.token_urlsafe(48)
     webhook = args.alert_webhook or "http://alert-sink:9099/alerts"
     public_origin = f"https://{args.hostname}"
-    database_url = (
-        "postgresql://dbtune_control:"
-        f"{quote(password, safe='')}@postgres:5432/dba_agent"
+    migration_database_url = (
+        "postgresql://dbtune_migrator:"
+        f"{quote(migration_password, safe='')}@postgres:5432/dba_agent"
+    )
+    runtime_database_url = (
+        "postgresql://dbtune_runtime:"
+        f"{quote(runtime_password, safe='')}@postgres:5432/dba_agent"
+    )
+    backup_database_url = (
+        "postgresql://dbtune_backup:"
+        f"{quote(backup_password, safe='')}@postgres:5432/dba_agent"
     )
 
     text = EXAMPLE.read_text(encoding="utf-8")
     values = {
         "CORS_ORIGINS": json.dumps([public_origin], separators=(",", ":")),
         "POSTGRES_PASSWORD": password,
-        "CONTROL_DATABASE_URL": database_url,
+        "POSTGRES_MIGRATION_PASSWORD": migration_password,
+        "POSTGRES_RUNTIME_PASSWORD": runtime_password,
+        "POSTGRES_BACKUP_PASSWORD": backup_password,
+        "MIGRATION_DATABASE_URL": migration_database_url,
+        "CONTROL_DATABASE_URL": runtime_database_url,
+        "BACKUP_DATABASE_URL": backup_database_url,
         "REDIS_PASSWORD": redis_password,
         "CONTROL_REDIS_URL": f"redis://:{quote(redis_password, safe='')}@redis:6379/0",
         "BOOTSTRAP_ADMIN_TOKEN": admin_token,

@@ -42,6 +42,9 @@ validated.
 Run migrations with a separate schema-owner credential. The API and worker
 credential should have only DML and sequence privileges on the application
 schema and must not own `audit_log` or be able to drop its append-only rules.
+The bundled staging path enforces this using `dbtune_bootstrap`,
+`dbtune_migrator`, `dbtune_runtime`, and `dbtune_backup`; real deployments may
+use different role names but must preserve the same privilege boundaries.
 
 ## 2. Provision each target with least privilege
 

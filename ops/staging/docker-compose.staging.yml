@@ -39,6 +39,43 @@ services:
     cap_drop:
       - ALL
 
+  control-role-init:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    environment:
+      - PGHOST=postgres
+      - PGPORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:?POSTGRES_USER is required}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - POSTGRES_DB=${POSTGRES_DB:?POSTGRES_DB is required}
+      - POSTGRES_MIGRATION_PASSWORD=${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}
+      - POSTGRES_RUNTIME_PASSWORD=${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}
+      - POSTGRES_BACKUP_PASSWORD=${POSTGRES_BACKUP_PASSWORD:?POSTGRES_BACKUP_PASSWORD is required}
+    volumes:
+      - ./docker/dbtune-control/init-roles.sh:/usr/local/bin/init-roles.sh:ro
+    command: ["/bin/sh", "/usr/local/bin/init-roles.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  migrate:
+    command:
+      - sh
+      - -c
+      - python -m backend.db.init_db && python -m backend.db.staging_roles
+    environment:
+      - DATABASE_URL=${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}
+    depends_on:
+      control-role-init:
+        condition: service_completed_successfully
+
   frontend:
     ports:
       - "0.0.0.0:${STAGING_HTTPS_PORT:-18443}:443"
@@ -69,6 +106,9 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:?POSTGRES_USER is required}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - POSTGRES_DB=${POSTGRES_DB:?POSTGRES_DB is required}
+      - POSTGRES_MIGRATION_PASSWORD=${POSTGRES_MIGRATION_PASSWORD:?POSTGRES_MIGRATION_PASSWORD is required}
+      - POSTGRES_RUNTIME_PASSWORD=${POSTGRES_RUNTIME_PASSWORD:?POSTGRES_RUNTIME_PASSWORD is required}
+      - POSTGRES_BACKUP_PASSWORD=${POSTGRES_BACKUP_PASSWORD:?POSTGRES_BACKUP_PASSWORD is required}
     command:
       - postgres
       - -c
@@ -79,6 +119,16 @@ services:
       - log_connections=on
       - -c
       - log_disconnections=on
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     security_opt:
       - no-new-privileges:true
 
@@ -199,8 +249,8 @@ services:
     environment:
       - PGHOST=postgres
       - PGPORT=5432
-      - PGUSER=${POSTGRES_USER:?POSTGRES_USER is required}
-      - PGPASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - PGUSER=dbtune_backup
+      - PGPASSWORD=${POSTGRES_BACKUP_PASSWORD:?POSTGRES_BACKUP_PASSWORD is required}
       - PGDATABASE=${POSTGRES_DB:?POSTGRES_DB is required}
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-3600}
       - BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-14}

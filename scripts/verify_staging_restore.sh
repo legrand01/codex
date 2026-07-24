@@ -24,9 +24,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"${COMPOSE[@]}" exec -T postgres pg_dump \
-  --username "$POSTGRES_USER" \
-  --dbname "$POSTGRES_DB" \
+"${COMPOSE[@]}" exec -T backup pg_dump \
   --format=custom \
   --no-owner \
   --no-privileges > "$DUMP"
