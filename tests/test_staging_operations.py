@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts import staging_init
@@ -11,13 +12,17 @@ from scripts.staging_init import replace_value
 from scripts.staging_preflight import (
     load_env,
     validate_database_roles,
+    validate_release_identity,
     validate_workload_bounds,
 )
 from scripts.staging_soak import (
     SoakState,
     classify_decision,
     external_gates,
+    production_tls_mode,
+    release_identity,
     run_drill,
+    running_image_manifest,
     sampling_coverage,
     verify_database_roles,
 )
@@ -40,6 +45,7 @@ def test_staging_init_generates_distinct_database_role_credentials(
     monkeypatch.setattr(staging_init, "ENV_FILE", env_file)
     monkeypatch.setattr(staging_init, "SECRET_DIR", secret_dir)
     monkeypatch.setattr(staging_init, "GENERATED_DIR", generated_dir)
+    monkeypatch.setattr(staging_init, "current_release_sha", lambda: "a" * 40)
 
     def fake_certificate(hostname):
         del hostname
@@ -52,6 +58,7 @@ def test_staging_init_generates_distinct_database_role_credentials(
 
     values = load_env(env_file)
     assert validate_database_roles(values) == []
+    assert values["RELEASE_COMMIT_SHA"] == "a" * 40
     passwords = {
         values["POSTGRES_PASSWORD"],
         values["POSTGRES_MIGRATION_PASSWORD"],
@@ -121,6 +128,35 @@ def test_database_roles_must_be_distinct_and_least_privilege_ready():
     ]
 
 
+def test_release_identity_must_match_clean_checkout(monkeypatch, tmp_path):
+    values = {"RELEASE_COMMIT_SHA": "a" * 40}
+    results = iter(
+        [
+            subprocess.CompletedProcess(["git"], 0, f"{'a' * 40}\n", ""),
+            subprocess.CompletedProcess(["git"], 0, "", ""),
+        ]
+    )
+    monkeypatch.setattr(
+        "scripts.staging_preflight.subprocess.run",
+        lambda *args, **kwargs: next(results),
+    )
+    assert validate_release_identity(values, root=tmp_path) == []
+
+    dirty_results = iter(
+        [
+            subprocess.CompletedProcess(["git"], 0, f"{'a' * 40}\n", ""),
+            subprocess.CompletedProcess(["git"], 0, " M backend/main.py\n", ""),
+        ]
+    )
+    monkeypatch.setattr(
+        "scripts.staging_preflight.subprocess.run",
+        lambda *args, **kwargs: next(dirty_results),
+    )
+    assert validate_release_identity(values, root=tmp_path) == [
+        "staging release checkout must be clean before images are built"
+    ]
+
+
 def test_workload_rejects_non_numeric_values_without_shell_evaluation(tmp_path):
     root = Path(__file__).resolve().parents[1]
     marker = tmp_path / "must-not-exist"
@@ -143,7 +179,19 @@ def test_workload_rejects_non_numeric_values_without_shell_evaluation(tmp_path):
 def test_soak_state_is_resumable(tmp_path, monkeypatch):
     state_path = tmp_path / "run-state.json"
     monkeypatch.setattr("scripts.staging_soak.target_transaction_count", lambda: 42)
-    initial = SoakState.load_or_create(state_path, 86400, resume=False)
+    images = {
+        "app": {
+            "configured_image": "dbtune-app:candidate",
+            "image_id": "sha256:abc",
+        }
+    }
+    initial = SoakState.load_or_create(
+        state_path,
+        86400,
+        resume=False,
+        release={"commit_sha": "abc123", "branch": "codex/release"},
+        images=images,
+    )
     initial.completed_drills.append("worker_restart")
     initial.drill_results["worker_restart"] = {"passed": True}
     initial.samples_total = 100
@@ -161,7 +209,90 @@ def test_soak_state_is_resumable(tmp_path, monkeypatch):
     assert restored.last_sample_epoch == initial.started_at_epoch + 300
     assert restored.max_sample_gap_seconds == 31.5
     assert restored.started_at_epoch == initial.started_at_epoch
+    assert restored.release_sha == "abc123"
+    assert restored.release_branch == "codex/release"
+    assert restored.image_manifest == images
     assert not state_path.with_suffix(".json.tmp").exists()
+
+
+def test_release_identity_requires_a_clean_worktree(monkeypatch):
+    results = iter(
+        [
+            subprocess.CompletedProcess(["git"], 0, "abc123\n", ""),
+            subprocess.CompletedProcess(["git"], 0, "codex/release\n", ""),
+            subprocess.CompletedProcess(["git"], 0, "", ""),
+        ]
+    )
+    monkeypatch.setattr(
+        "scripts.staging_soak.run",
+        lambda command, timeout=120: next(results),
+    )
+
+    passed, evidence, detail = release_identity()
+
+    assert passed is True
+    assert evidence == {
+        "commit_sha": "abc123",
+        "branch": "codex/release",
+        "worktree_clean": True,
+        "dirty_paths": [],
+    }
+    assert detail == ""
+
+    dirty_results = iter(
+        [
+            subprocess.CompletedProcess(["git"], 0, "abc123\n", ""),
+            subprocess.CompletedProcess(["git"], 0, "codex/release\n", ""),
+            subprocess.CompletedProcess(["git"], 0, " M backend/main.py\n", ""),
+        ]
+    )
+    monkeypatch.setattr(
+        "scripts.staging_soak.run",
+        lambda command, timeout=120: next(dirty_results),
+    )
+    passed, evidence, _ = release_identity()
+    assert passed is False
+    assert evidence["dirty_paths"] == ["backend/main.py"]
+
+
+def test_running_image_manifest_requires_every_production_soak_service(monkeypatch):
+    services = [
+        "alertmanager",
+        "app",
+        "backup",
+        "frontend",
+        "postgres",
+        "prometheus",
+        "redis",
+        "target-host-agent",
+        "target-postgres",
+        "target-workload",
+        "worker",
+    ]
+    rows = "\n".join(
+        (
+            f"{service}\trepository/{service}:candidate\tsha256:{index:064x}"
+            f"\t{'a' * 40 if service in {'app', 'frontend', 'target-host-agent', 'worker'} else ''}"
+        )
+        for index, service in enumerate(services, start=1)
+    )
+    results = iter(
+        [
+            subprocess.CompletedProcess(["docker"], 0, "one\ntwo\n", ""),
+            subprocess.CompletedProcess(["docker"], 0, rows, ""),
+        ]
+    )
+    monkeypatch.setattr(
+        "scripts.staging_soak.run",
+        lambda command, timeout=120: next(results),
+    )
+
+    passed, manifest, _ = running_image_manifest(expected_release_sha="a" * 40)
+
+    assert passed is True
+    assert set(manifest) == set(services)
+    assert manifest["app"]["image_id"] == f"sha256:{2:064x}"
+    assert manifest["app"]["source_revision"] == "a" * 40
 
 
 def test_short_success_cannot_be_mislabeled_go():
@@ -182,22 +313,122 @@ def test_sampling_coverage_exposes_sleep_or_monitoring_gaps():
     assert sleeping_ratio < 0.995
 
 
-def test_external_gates_require_explicit_evidence_for_every_gate(tmp_path):
+def test_external_gates_are_structured_and_bound_to_release(tmp_path):
     path = tmp_path / "external.json"
-    path.write_text(
-        """
-        {
-          "real_tls": {"verified": true, "evidence": "certificate check"},
-          "external_alert_delivery": {"verified": true, "evidence": "page id"},
-          "independent_off_host_restore": {"verified": true, "evidence": "restore id"},
-          "staffed_go_no_go": {"verified": false, "evidence": ""}
-        }
-        """,
-        encoding="utf-8",
+    release_sha = "a" * 40
+    verified_at = "2026-07-24T08:00:00+00:00"
+    evidence = {
+        "schema_version": 1,
+        "release_candidate_sha": release_sha,
+        "gates": {
+            "real_tls": {
+                "verified": True,
+                "verified_at": verified_at,
+                "verified_by": "release-operator",
+                "evidence_id": "tls-check-42",
+                "evidence": {
+                    "hostname": "staging.dbtune.example",
+                    "certificate_sha256": "b" * 64,
+                    "issuer": "Example CA",
+                },
+            },
+            "external_alert_delivery": {
+                "verified": True,
+                "verified_at": verified_at,
+                "verified_by": "on-call-engineer",
+                "evidence_id": "incident-42",
+                "evidence": {
+                    "receiver": "pager",
+                    "alert_id": "alert-42",
+                    "acknowledgement_id": "ack-42",
+                },
+            },
+            "independent_off_host_restore": {
+                "verified": True,
+                "verified_at": verified_at,
+                "verified_by": "database-operator",
+                "evidence_id": "restore-42",
+                "evidence": {
+                    "source_backup_sha256": "c" * 64,
+                    "source_host": "staging-primary",
+                    "restore_host": "restore-validator",
+                    "restore_test_id": "restore-42",
+                },
+            },
+            "staffed_go_no_go": {
+                "verified": True,
+                "verified_at": verified_at,
+                "verified_by": "release-manager",
+                "evidence_id": "change-42",
+                "evidence": {
+                    "approver": "release-manager",
+                    "decision": "GO",
+                    "scope": "one self-managed reload-only PostgreSQL target",
+                },
+            },
+        },
+    }
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    complete, payload = external_gates(
+        path,
+        expected_release_sha=release_sha,
+        expected_hostname="staging.dbtune.example",
     )
-    complete, payload = external_gates(path)
+
+    assert complete is True
+    assert payload["validation_errors"] == []
+
+    evidence["unexpected_secret"] = "must-not-enter-summary"
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+    complete, payload = external_gates(path, expected_release_sha=release_sha)
     assert complete is False
-    assert payload["real_tls"]["verified"] is True
+    assert "unexpected_secret" not in payload
+    assert payload["validation_errors"] == [
+        "unexpected top-level evidence fields: ['unexpected_secret']"
+    ]
+    del evidence["unexpected_secret"]
+    path.write_text(json.dumps(evidence), encoding="utf-8")
+
+    complete, payload = external_gates(path, expected_release_sha="d" * 40)
+    assert complete is False
+    assert payload["validation_errors"] == [
+        "release_candidate_sha does not match the qualified commit"
+    ]
+
+    complete, payload = external_gates(
+        path,
+        expected_release_sha=release_sha,
+        expected_hostname="different.dbtune.example",
+    )
+    assert complete is False
+    assert payload["validation_errors"] == [
+        "real_tls: evidence.hostname does not match the qualified URL"
+    ]
+
+    complete, payload = external_gates(
+        path,
+        expected_release_sha=release_sha,
+        expected_hostname="staging.dbtune.example",
+        earliest_verified_at=datetime(2026, 7, 24, 9, tzinfo=timezone.utc),
+        staffed_not_before=datetime(2026, 7, 25, 9, tzinfo=timezone.utc),
+        now=datetime(2026, 7, 25, 10, tzinfo=timezone.utc),
+    )
+    assert complete is False
+    errors = payload["validation_errors"]
+    assert sum("predates the qualification" in error for error in errors) == 4
+    assert (
+        "staffed_go_no_go: verified_at predates qualification completion"
+        in errors
+    )
+
+
+def test_production_tls_mode_rejects_insecure_and_loopback_urls():
+    assert production_tls_mode("https://staging.dbtune.example", False) is True
+    assert production_tls_mode("https://staging.dbtune.example", True) is False
+    assert production_tls_mode("http://staging.dbtune.example", False) is False
+    assert production_tls_mode("https://127.0.0.1:18443", False) is False
+    assert production_tls_mode("https://localhost:18443", False) is False
 
 
 def test_json_drill_keeps_complete_structured_evidence(tmp_path, monkeypatch):
@@ -275,6 +506,13 @@ def test_staging_compose_keeps_write_interlocks_disabled():
     assert "control-role-init:" in compose
     assert "DATABASE_URL=${MIGRATION_DATABASE_URL:" in compose
     assert "PGUSER=dbtune_backup" in compose
+    assert compose.count("RELEASE_COMMIT_SHA: ${RELEASE_COMMIT_SHA:") == 5
+
+    for dockerfile_name in ("Dockerfile.backend", "Dockerfile.frontend"):
+        dockerfile = (root / "docker" / dockerfile_name).read_text(encoding="utf-8")
+        assert 'LABEL org.opencontainers.image.revision="${RELEASE_COMMIT_SHA}"' in (
+            dockerfile
+        )
 
 
 def test_role_initializer_removes_unexpected_inherited_privileges():

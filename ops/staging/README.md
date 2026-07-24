@@ -27,6 +27,13 @@ elevated role flags, runtime restrictions, or backup read-only status drift.
 Never use `POSTGRES_USER` in `CONTROL_DATABASE_URL`, `MIGRATION_DATABASE_URL`,
 or `BACKUP_DATABASE_URL`.
 
+Run qualification only from a clean Git checkout of the intended release
+commit. The soak records that commit and the immutable image ID for every
+required running service in `run-state.json`. Resume refuses a different commit
+or image manifest, and the final mechanics decision fails if the checkout
+becomes dirty or any service is recreated from a different image during the
+observation window.
+
 Initialize real staging:
 
 ```bash
@@ -100,8 +107,13 @@ The local alert sink proves the Prometheus-to-Alertmanager webhook mechanics.
 Production approval still requires evidence from the external paging receiver,
 real public TLS, and a restore outside the staging host. Copy
 `ops/staging/external-evidence.example.json` to a protected operator location,
-fill it only with verifiable evidence identifiers, and pass it to the final
-resume:
+bind `release_candidate_sha` to the exact qualified commit, and fill every gate
+with a timezone-aware verifier attestation plus the requested external evidence
+identifiers. The restore source and target hosts must differ, certificate and
+backup SHA-256 values must be complete, and the staffed decision must be `GO`.
+Every verification must occur during the candidate qualification or afterward;
+the staffed approval timestamp must follow completion of the minimum duration.
+Pass the protected evidence file to the final resume:
 
 ```bash
 venv/bin/python scripts/staging_soak.py \
@@ -119,11 +131,13 @@ least 99.5% successful readiness samples, ongoing target transaction progress,
 at least 99.5% of the expected sampling cadence, no sampling gap longer than
 three intervals (or 60 seconds, whichever is greater), disabled control-plane
 write interlocks, a passing structured database-role verification, all
-automatic drills passing, and all four external evidence gates. This prevents
-host sleep, a stopped monitor, or a privileged runtime/backup credential from
-being counted as successful soak time. It reports `PENDING_EXTERNAL_GATES`
-rather than silently treating local alert or restore mechanics as production
-proof.
+automatic drills passing, an unchanged clean release commit and container image
+manifest, and all four external evidence gates. This prevents host sleep, a
+stopped monitor, a privileged runtime/backup credential, or an untracked
+mid-soak deployment from being counted as successful soak time. It reports
+`PENDING_EXTERNAL_GATES` rather than silently treating local alert or restore
+mechanics as production proof. `--insecure`, HTTP, localhost, and loopback URLs
+are mechanically testable but can never produce a production `GO`.
 
 Release remains **NO-GO** if any of the following are true:
 

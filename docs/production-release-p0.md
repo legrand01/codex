@@ -109,6 +109,10 @@ Confirm authenticated HTTP and WebSocket access, tenant isolation, host
 heartbeats, fresh evidence, worker lease heartbeats, and an approved dry-run on a
 staging primary. The Start tuning preflight must show a fresh capability report,
 zero blockers, and at least one independently allowlisted parameter.
+The final soak evidence must bind the clean release commit and immutable running
+image IDs to structured TLS, external alert acknowledgement, independent
+off-host restore, and staffed approval records. An insecure or loopback soak is
+failure-drill evidence only and cannot qualify a release.
 
 ## 4. Enable a production target deliberately
 

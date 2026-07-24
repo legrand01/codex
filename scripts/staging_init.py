@@ -17,6 +17,20 @@ SECRET_DIR = ROOT / ".staging" / "secrets"
 GENERATED_DIR = ROOT / ".staging" / "generated"
 
 
+def current_release_sha() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    release_sha = result.stdout.strip()
+    if len(release_sha) != 40:
+        raise RuntimeError("Git did not return a full 40-character release commit")
+    return release_sha
+
+
 def replace_value(text: str, key: str, value: str) -> str:
     lines = text.splitlines()
     prefix = f"{key}="
@@ -121,6 +135,7 @@ def main() -> None:
 
     text = EXAMPLE.read_text(encoding="utf-8")
     values = {
+        "RELEASE_COMMIT_SHA": current_release_sha(),
         "CORS_ORIGINS": json.dumps([public_origin], separators=(",", ":")),
         "POSTGRES_PASSWORD": password,
         "POSTGRES_MIGRATION_PASSWORD": migration_password,

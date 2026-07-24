@@ -1,18 +1,51 @@
 {
-  "real_tls": {
-    "verified": false,
-    "evidence": ""
-  },
-  "external_alert_delivery": {
-    "verified": false,
-    "evidence": ""
-  },
-  "independent_off_host_restore": {
-    "verified": false,
-    "evidence": ""
-  },
-  "staffed_go_no_go": {
-    "verified": false,
-    "evidence": ""
+  "schema_version": 1,
+  "release_candidate_sha": "REPLACE_WITH_40_CHARACTER_GIT_COMMIT",
+  "gates": {
+    "real_tls": {
+      "verified": false,
+      "verified_at": "",
+      "verified_by": "",
+      "evidence_id": "",
+      "evidence": {
+        "hostname": "",
+        "certificate_sha256": "",
+        "issuer": ""
+      }
+    },
+    "external_alert_delivery": {
+      "verified": false,
+      "verified_at": "",
+      "verified_by": "",
+      "evidence_id": "",
+      "evidence": {
+        "receiver": "",
+        "alert_id": "",
+        "acknowledgement_id": ""
+      }
+    },
+    "independent_off_host_restore": {
+      "verified": false,
+      "verified_at": "",
+      "verified_by": "",
+      "evidence_id": "",
+      "evidence": {
+        "source_backup_sha256": "",
+        "source_host": "",
+        "restore_host": "",
+        "restore_test_id": ""
+      }
+    },
+    "staffed_go_no_go": {
+      "verified": false,
+      "verified_at": "",
+      "verified_by": "",
+      "evidence_id": "",
+      "evidence": {
+        "approver": "",
+        "decision": "",
+        "scope": ""
+      }
+    }
   }
 }

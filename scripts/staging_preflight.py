@@ -108,6 +108,41 @@ def validate_database_roles(values: dict[str, str]) -> list[str]:
     return failures
 
 
+def validate_release_identity(
+    values: dict[str, str],
+    root: Path = ROOT,
+) -> list[str]:
+    failures: list[str] = []
+    expected_sha = values.get("RELEASE_COMMIT_SHA", "")
+    if len(expected_sha) != 40 or any(
+        character not in "0123456789abcdefABCDEF" for character in expected_sha
+    ):
+        failures.append("RELEASE_COMMIT_SHA must be a full 40-character Git commit")
+
+    sha_result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    status_result = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if sha_result.returncode or status_result.returncode:
+        failures.append("staging must run from an identifiable Git checkout")
+        return failures
+    if sha_result.stdout.strip() != expected_sha:
+        failures.append("RELEASE_COMMIT_SHA must match the checked-out commit")
+    if status_result.stdout.strip():
+        failures.append("staging release checkout must be clean before images are built")
+    return failures
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", type=Path, default=ROOT / ".env.staging")
@@ -121,6 +156,7 @@ def main() -> None:
     values = load_env(args.env_file)
     failures.extend(validate_workload_bounds(values, allow_local=args.allow_local))
     failures.extend(validate_database_roles(values))
+    failures.extend(validate_release_identity(values))
 
     expected = {
         "ENVIRONMENT": "production",
@@ -190,7 +226,7 @@ def main() -> None:
         raise SystemExit(1)
     print(
         "Staging preflight passed: secrets, TLS, alert route, auth, "
-        "database role separation, and write interlocks"
+        "release identity, database role separation, and write interlocks"
     )
 
 
