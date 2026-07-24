@@ -12,11 +12,14 @@ import urllib.request
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import asyncpg  # type: ignore[import-untyped]
-from staging_preflight import load_env
+from staging_preflight import (
+    host_runtime_database_url,
+    load_env,
+    runtime_database_identity,
+)
 
 from backend.config import settings
 from backend.services.target_executor import (
@@ -69,6 +72,7 @@ def wait_until(
 
 
 def psql_scalar(values: dict[str, str], query: str) -> str:
+    username, _, database = runtime_database_identity(values)
     result = run(
         COMPOSE
         + [
@@ -77,9 +81,9 @@ def psql_scalar(values: dict[str, str], query: str) -> str:
             "postgres",
             "psql",
             "-U",
-            values["POSTGRES_USER"],
+            username,
             "-d",
-            values["POSTGRES_DB"],
+            database,
             "-Atc",
             query,
         ],
@@ -118,11 +122,7 @@ def readiness_ok(base_url: str) -> bool:
 
 
 def control_dsn(values: dict[str, str]) -> str:
-    return (
-        f"postgresql://{quote(values['POSTGRES_USER'], safe='')}:"
-        f"{quote(values['POSTGRES_PASSWORD'], safe='')}@127.0.0.1:"
-        f"{values.get('PG_PORT', '15432')}/{quote(values['POSTGRES_DB'], safe='')}"
-    )
+    return host_runtime_database_url(values)
 
 
 async def assert_live_ambiguous_write_block(

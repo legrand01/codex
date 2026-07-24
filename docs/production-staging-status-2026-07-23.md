@@ -88,7 +88,7 @@ caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
 
 ## Automated release evidence
 
-- Backend: 651 passed, 5 skipped.
+- Backend: 652 passed, 5 skipped.
 - Ruff: passed.
 - Strict type checking for the new staging/release modules: passed.
 - Frontend lint and production build: passed.

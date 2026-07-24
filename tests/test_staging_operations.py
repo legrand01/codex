@@ -11,7 +11,9 @@ from pathlib import Path
 from scripts import staging_init
 from scripts.staging_init import replace_value
 from scripts.staging_preflight import (
+    host_runtime_database_url,
     load_env,
+    runtime_database_identity,
     validate_database_roles,
     validate_release_identity,
     validate_workload_bounds,
@@ -121,6 +123,15 @@ def test_database_roles_must_be_distinct_and_least_privilege_ready():
         ),
     }
     assert validate_database_roles(values) == []
+    assert runtime_database_identity(values) == (
+        "dbtune_runtime",
+        "runtime-password-that-is-long-enough",
+        "dba_agent",
+    )
+    assert host_runtime_database_url(values) == (
+        "postgresql://dbtune_runtime:runtime-password-that-is-long-enough"
+        "@127.0.0.1:15432/dba_agent"
+    )
 
     values["CONTROL_DATABASE_URL"] = values["MIGRATION_DATABASE_URL"]
     assert validate_database_roles(values) == [
@@ -128,6 +139,15 @@ def test_database_roles_must_be_distinct_and_least_privilege_ready():
         "CONTROL_DATABASE_URL password must match POSTGRES_RUNTIME_PASSWORD",
         "bootstrap, migrator, runtime, and backup roles must be distinct",
     ]
+
+
+def test_failure_drills_never_connect_with_bootstrap_credentials():
+    root = Path(__file__).resolve().parents[1]
+    for script_name in ("staging_drills.py", "drill_regression_rollback.py"):
+        script = (root / "scripts" / script_name).read_text(encoding="utf-8")
+        assert 'values["POSTGRES_USER"]' not in script
+        assert "values['POSTGRES_USER']" not in script
+        assert "host_runtime_database_url" in script
 
 
 def test_release_identity_must_match_clean_checkout(monkeypatch, tmp_path):

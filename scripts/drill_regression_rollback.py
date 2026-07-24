@@ -8,12 +8,11 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 from uuid import UUID
 
 import asyncpg  # type: ignore[import-untyped]
 from benchmark_tuning_lab import benchmark
-from staging_preflight import load_env
+from staging_preflight import host_runtime_database_url, load_env
 
 from backend.config import settings
 from backend.services.configuration_backends import ManagedConfFileBackend
@@ -23,11 +22,7 @@ TARGET_DSN = "postgresql://dbtune:dbtune-lab-only@127.0.0.1:55433/dbtune_target"
 
 
 def control_dsn(values: dict[str, str]) -> str:
-    return (
-        f"postgresql://{quote(values['POSTGRES_USER'], safe='')}:"
-        f"{quote(values['POSTGRES_PASSWORD'], safe='')}@127.0.0.1:"
-        f"{values.get('PG_PORT', '15432')}/{quote(values['POSTGRES_DB'], safe='')}"
-    )
+    return host_runtime_database_url(values)
 
 
 def regressed(baseline: dict[str, Any], candidate: dict[str, Any]) -> bool:

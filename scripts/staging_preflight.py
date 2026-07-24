@@ -6,7 +6,7 @@ import argparse
 import json
 import subprocess
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -106,6 +106,36 @@ def validate_database_roles(values: dict[str, str]) -> list[str]:
     if any(not password for password in passwords) or len(set(passwords)) != 4:
         failures.append("all database roles must use distinct non-empty passwords")
     return failures
+
+
+def runtime_database_identity(values: dict[str, str]) -> tuple[str, str, str]:
+    parsed = urlparse(values.get("CONTROL_DATABASE_URL", ""))
+    username = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    database = unquote(parsed.path.lstrip("/"))
+    if (
+        parsed.scheme not in {"postgresql", "postgres"}
+        or username != "dbtune_runtime"
+        or not password
+        or not database
+    ):
+        raise ValueError(
+            "CONTROL_DATABASE_URL must contain the dedicated dbtune_runtime "
+            "credential and database"
+        )
+    return username, password, database
+
+
+def host_runtime_database_url(values: dict[str, str]) -> str:
+    username, password, database = runtime_database_identity(values)
+    port = values.get("PG_PORT", "15432")
+    if not port.isdigit():
+        raise ValueError("PG_PORT must be numeric")
+    return (
+        f"postgresql://{quote(username, safe='')}:"
+        f"{quote(password, safe='')}@127.0.0.1:{port}/"
+        f"{quote(database, safe='')}"
+    )
 
 
 def validate_release_identity(
