@@ -113,6 +113,9 @@ The final soak evidence must bind the clean release commit and immutable running
 image IDs to structured TLS, external alert acknowledgement, independent
 off-host restore, and staffed approval records. An insecure or loopback soak is
 failure-drill evidence only and cannot qualify a release.
+Use `scripts/verify_off_host_restore.py` against a pre-created empty
+`dbtune_restore_*` database on the independent host; never point that verifier
+at a production database or place its credential on the command line.
 
 ## 4. Enable a production target deliberately
 

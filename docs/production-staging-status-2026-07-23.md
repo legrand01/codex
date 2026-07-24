@@ -88,7 +88,7 @@ caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
 
 ## Automated release evidence
 
-- Backend: 649 passed, 5 skipped.
+- Backend: 651 passed, 5 skipped.
 - Ruff: passed.
 - Strict type checking for the new staging/release modules: passed.
 - Frontend lint and production build: passed.
@@ -98,6 +98,14 @@ caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
 - Development and staging Compose models: valid.
 - Backend images rebuilt successfully from the pinned runtime lock.
 - Runtime base and service images use immutable manifest digests.
+
+The independent-restore operator verifier was also exercised against a separate
+TLS-enabled PostgreSQL 16 container. It rejected a PostgreSQL 17 `pg_restore`
+client before mutation, then restored a 106,790,521-byte checksum-verified dump
+with matching PostgreSQL 16 tools. The result contained all 19 migrations and
+31 public tables; an immediate rerun refused the non-empty database. Because
+both containers were on this Mac, this proves mechanics and fail-closed
+behavior only, not the required off-host gate.
 
 ## Remaining production blockers
 

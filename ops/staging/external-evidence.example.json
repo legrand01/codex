@@ -34,6 +34,12 @@
         "source_host": "",
         "restore_host": "",
         "restore_test_id": ""
+      },
+      "measurements": {
+        "dump_size_bytes": 0,
+        "postgres_major": 0,
+        "schema_migrations": 0,
+        "public_tables": 0
       }
     },
     "staffed_go_no_go": {

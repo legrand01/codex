@@ -362,6 +362,12 @@ def test_external_gates_are_structured_and_bound_to_release(tmp_path):
                     "restore_host": "restore-validator",
                     "restore_test_id": "restore-42",
                 },
+                "measurements": {
+                    "dump_size_bytes": 1024,
+                    "postgres_major": 16,
+                    "schema_migrations": 19,
+                    "public_tables": 29,
+                },
             },
             "staffed_go_no_go": {
                 "verified": True,

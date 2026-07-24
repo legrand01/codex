@@ -32,6 +32,7 @@ jobs:
           scripts/drill_regression_rollback.py
           scripts/staging_soak.py
           backend/db/staging_roles.py
+          scripts/verify_off_host_restore.py
       - name: Enforce repository-wide mypy debt baseline
         run: python scripts/check_mypy_baseline.py
       - name: Python dependency audit

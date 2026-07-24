@@ -440,6 +440,12 @@ EXTERNAL_EVIDENCE_FIELDS = {
         "scope",
     },
 }
+RESTORE_MEASUREMENT_FIELDS = {
+    "dump_size_bytes",
+    "postgres_major",
+    "public_tables",
+    "schema_migrations",
+}
 SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
@@ -571,10 +577,16 @@ def external_gates(
         if not isinstance(entry, dict):
             errors.append(f"{gate}: gate evidence must be an object")
             continue
-        unexpected_entry_fields = sorted(
-            set(entry)
-            - {"verified", "verified_at", "verified_by", "evidence_id", "evidence"}
-        )
+        allowed_entry_fields = {
+            "verified",
+            "verified_at",
+            "verified_by",
+            "evidence_id",
+            "evidence",
+        }
+        if gate == "independent_off_host_restore":
+            allowed_entry_fields.add("measurements")
+        unexpected_entry_fields = sorted(set(entry) - allowed_entry_fields)
         if unexpected_entry_fields:
             errors.append(
                 f"{gate}: unexpected fields: {unexpected_entry_fields}"
@@ -665,6 +677,37 @@ def external_gates(
                     "independent_off_host_restore: source_host and restore_host "
                     "must differ"
                 )
+            measurements = entry.get("measurements")
+            if not isinstance(measurements, dict):
+                errors.append(
+                    "independent_off_host_restore: measurements must be an object"
+                )
+            else:
+                unexpected_measurements = sorted(
+                    set(measurements) - RESTORE_MEASUREMENT_FIELDS
+                )
+                if unexpected_measurements:
+                    errors.append(
+                        "independent_off_host_restore: unexpected measurement "
+                        f"fields: {unexpected_measurements}"
+                    )
+                minimums = {
+                    "dump_size_bytes": 1,
+                    "postgres_major": 12,
+                    "schema_migrations": 19,
+                    "public_tables": 10,
+                }
+                for field_name, minimum in minimums.items():
+                    value = measurements.get(field_name)
+                    if (
+                        not isinstance(value, int)
+                        or isinstance(value, bool)
+                        or value < minimum
+                    ):
+                        errors.append(
+                            "independent_off_host_restore: "
+                            f"measurements.{field_name} must be at least {minimum}"
+                        )
         elif gate == "staffed_go_no_go" and evidence.get("decision") != "GO":
             errors.append("staffed_go_no_go: evidence.decision must be GO")
         validated_gates[gate] = {
@@ -677,6 +720,14 @@ def external_gates(
                 for field_name in sorted(EXTERNAL_EVIDENCE_FIELDS[gate])
             },
         }
+        if gate == "independent_off_host_restore":
+            measurements = entry.get("measurements")
+            validated_gates[gate]["measurements"] = {
+                field_name: measurements.get(field_name)
+                if isinstance(measurements, dict)
+                else None
+                for field_name in sorted(RESTORE_MEASUREMENT_FIELDS)
+            }
 
     validated = {
         "schema_version": payload.get("schema_version"),

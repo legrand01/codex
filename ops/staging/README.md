@@ -126,6 +126,32 @@ venv/bin/python scripts/staging_soak.py \
   --external-evidence /secure/path/external-evidence.json
 ```
 
+For the independent restore gate, first provision an empty database whose name
+starts with `dbtune_restore_` on a separately administered PostgreSQL host. The
+verifier refuses the source host, non-TLS DSNs, non-empty databases, and DSNs on
+the command line. It also requires `pg_restore` to match the target PostgreSQL
+major version, validates the dump sidecar before restoring, uses one
+transaction, and emits no credential. Use `--psql` and `--pg-restore` when the
+matching client tools are outside `PATH`:
+
+```bash
+export DBTUNE_OFFHOST_RESTORE_DSN='postgresql://validator:REDACTED@restore.example/dbtune_restore_release42?sslmode=verify-full'
+venv/bin/python scripts/verify_off_host_restore.py \
+  --dump /secure/off-host/control-20260724T120000Z.dump \
+  --release-sha REPLACE_WITH_40_CHARACTER_GIT_COMMIT \
+  --source-host staging-primary.example \
+  --restore-host restore.example \
+  --restore-test-id restore-20260724-42 \
+  --verified-by database-operator \
+  --output /secure/path/off-host-restore-evidence.json
+unset DBTUNE_OFFHOST_RESTORE_DSN
+```
+
+Review the output, then copy its `independent_off_host_restore` gate into the
+complete external evidence document. Keep the restored database available for
+the staffed review; remove it only after the release decision and evidence
+retention handoff.
+
 ## Go/no-go
 
 `summary.json` may say `GO` only after the full qualification duration, at
