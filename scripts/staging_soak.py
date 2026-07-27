@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import ipaddress
 import json
 import math
+import os
 import re
 import socket
 import ssl
@@ -18,7 +20,7 @@ import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TextIO, cast
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -555,6 +557,9 @@ class SoakState:
     last_sample_at: str | None = None
     last_sample_epoch: float | None = None
     max_sample_gap_seconds: float = 0.0
+    sampling_gap_count: int = 0
+    missed_sample_intervals: int = 0
+    fatal_sampling_gap: dict[str, Any] | None = None
 
     @classmethod
     def load_or_create(
@@ -645,6 +650,71 @@ def sampling_coverage(
 ) -> tuple[int, float]:
     expected = max(1, math.ceil(max(0.0, observation_seconds) / interval_seconds))
     return expected, min(1.0, samples_total / expected)
+
+
+def maximum_allowed_sample_gap(interval_seconds: float) -> float:
+    return max(60.0, interval_seconds * 3)
+
+
+def sampling_gap_evidence(
+    previous_sample_epoch: float,
+    sample_epoch: float,
+    interval_seconds: float,
+) -> dict[str, float | int] | None:
+    gap_seconds = max(0.0, sample_epoch - previous_sample_epoch)
+    maximum_allowed = maximum_allowed_sample_gap(interval_seconds)
+    if gap_seconds <= maximum_allowed:
+        return None
+    return {
+        "gap_seconds": round(gap_seconds, 6),
+        "maximum_allowed_gap_seconds": round(maximum_allowed, 6),
+        "missed_sample_intervals": max(
+            1,
+            math.floor(gap_seconds / interval_seconds),
+        ),
+    }
+
+
+def next_sample_deadline(
+    previous_deadline_epoch: float,
+    current_epoch: float,
+    interval_seconds: float,
+) -> float:
+    """Return the next future cadence boundary without burst catch-up samples."""
+    next_deadline = previous_deadline_epoch + interval_seconds
+    if next_deadline <= current_epoch:
+        skipped_deadlines = (
+            math.floor((current_epoch - next_deadline) / interval_seconds) + 1
+        )
+        next_deadline += skipped_deadlines * interval_seconds
+    return next_deadline
+
+
+def acquire_soak_lock(output_dir: Path) -> TextIO:
+    """Hold a process lock so one output directory has exactly one sampler."""
+    lock_path = output_dir / ".runner.lock"
+    handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise RuntimeError(
+            f"another staging soak runner owns {lock_path}"
+        ) from exc
+    handle.seek(0)
+    handle.truncate()
+    handle.write(
+        json.dumps(
+            {
+                "acquired_at": utc_now(),
+                "pid": os.getpid(),
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    handle.flush()
+    return handle
 
 
 def production_tls_mode(base_url: str, insecure: bool) -> bool:
@@ -979,6 +1049,10 @@ def main() -> None:
     secure_transport = production_tls_mode(args.base_url, args.insecure)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        run_lock = acquire_soak_lock(args.output_dir)
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
     events_path = args.output_dir / "events.jsonl"
     state_path = args.output_dir / "run-state.json"
     summary_path = args.output_dir / "summary.json"
@@ -1121,10 +1195,13 @@ def main() -> None:
     }
     interrupted = False
     stop_sampler = threading.Event()
+    sampling_failed = threading.Event()
+    if state.fatal_sampling_gap is not None:
+        sampling_failed.set()
 
     def sample_until_stopped() -> None:
         next_sample_epoch = time.time()
-        while not stop_sampler.is_set():
+        while not stop_sampler.is_set() and not sampling_failed.is_set():
             elapsed = time.time() - state.started_at_epoch
             if elapsed >= state.requested_duration_seconds:
                 return
@@ -1142,6 +1219,8 @@ def main() -> None:
                 "target_transactions": transactions,
             }
             append_jsonl(events_path, sample, event_lock)
+            sample_epoch = time.time()
+            gap_event: dict[str, Any] | None = None
             with state_lock:
                 state.samples_total += 1
                 if sample["ready"]:
@@ -1159,17 +1238,44 @@ def main() -> None:
                     if state.last_sample_epoch is not None
                     else state.started_at_epoch
                 )
+                gap_evidence = sampling_gap_evidence(
+                    previous_sample_epoch,
+                    sample_epoch,
+                    args.interval_seconds,
+                )
                 state.max_sample_gap_seconds = max(
                     state.max_sample_gap_seconds,
                     max(0.0, sample_epoch - previous_sample_epoch),
                 )
+                if gap_evidence is not None:
+                    gap_event = {
+                        "kind": "sampling_gap",
+                        "timestamp": sample["timestamp"],
+                        "previous_sample_at": datetime.fromtimestamp(
+                            previous_sample_epoch,
+                            timezone.utc,
+                        ).isoformat(),
+                        **gap_evidence,
+                        "fatal": True,
+                    }
+                    state.sampling_gap_count += 1
+                    state.missed_sample_intervals += int(
+                        gap_evidence["missed_sample_intervals"]
+                    )
+                    state.fatal_sampling_gap = gap_event
                 state.last_sample_at = sample["timestamp"]
                 state.last_sample_epoch = sample_epoch
                 state.save(state_path)
-            next_sample_epoch += args.interval_seconds
+            if gap_event is not None:
+                append_jsonl(events_path, gap_event, event_lock)
+                sampling_failed.set()
+                return
+            next_sample_epoch = next_sample_deadline(
+                next_sample_epoch,
+                time.time(),
+                args.interval_seconds,
+            )
             wait_seconds = max(0.0, next_sample_epoch - time.time())
-            if wait_seconds == 0:
-                next_sample_epoch = time.time()
             stop_sampler.wait(wait_seconds)
 
     sampler = threading.Thread(
@@ -1180,6 +1286,8 @@ def main() -> None:
     sampler.start()
     try:
         while True:
+            if sampling_failed.is_set():
+                break
             elapsed = time.time() - state.started_at_epoch
             if elapsed >= state.requested_duration_seconds:
                 break
@@ -1262,10 +1370,13 @@ def main() -> None:
             state.max_sample_gap_seconds,
             tail_gap_seconds,
         )
-        maximum_allowed_gap_seconds = max(60.0, args.interval_seconds * 3)
+        maximum_allowed_gap_seconds = maximum_allowed_sample_gap(
+            args.interval_seconds
+        )
         sampling_continuous = (
             sample_coverage_ratio >= 0.995
             and max_sample_gap_seconds <= maximum_allowed_gap_seconds
+            and state.fatal_sampling_gap is None
         )
         readiness_ratio = (
             state.ready_samples / state.samples_total if state.samples_total else 0.0
@@ -1290,6 +1401,7 @@ def main() -> None:
             and transaction_progress
             and drills_passed
             and not interrupted
+            and not sampling_failed.is_set()
         )
         qualification_seconds = args.qualification_hours * 3600
         qualification_complete = elapsed >= qualification_seconds
@@ -1332,6 +1444,10 @@ def main() -> None:
                 3,
             ),
             "sampling_continuous": sampling_continuous,
+            "sampling_gap_count": state.sampling_gap_count,
+            "missed_sample_intervals": state.missed_sample_intervals,
+            "fatal_sampling_gap": state.fatal_sampling_gap,
+            "failed_fast_on_sampling_gap": sampling_failed.is_set(),
             "ready_samples": state.ready_samples,
             "readiness_ratio": round(readiness_ratio, 6),
             "baseline_transactions": state.baseline_transactions,
@@ -1363,6 +1479,7 @@ def main() -> None:
             encoding="utf-8",
         )
         print(json.dumps(summary, indent=2, sort_keys=True))
+        run_lock.close()
         if decision == "NO_GO":
             raise SystemExit(1)
 

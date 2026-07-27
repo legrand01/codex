@@ -92,15 +92,26 @@ Run the qualification for at least 24 hours and no more than 72:
 
 ```bash
 venv/bin/python scripts/staging_preflight.py --require-target-agent
-venv/bin/python scripts/staging_soak.py \
+scripts/run_staging_soak.sh \
   --duration-hours 24 \
   --interval-seconds 30 \
   --base-url https://staging.dbtune.example \
   --output-dir artifacts/staging-soak/release-candidate
 ```
 
-If the process or host is interrupted, rerun the same command with `--resume`.
-The state and append-only event stream survive process restarts.
+The wrapper holds a macOS `caffeinate` assertion for the life of the runner;
+keep the Mac connected to power and do not close the lid. On Linux it directly
+executes the Python runner and the qualification should be supervised by the
+host service manager. The runner holds an exclusive lock per output directory,
+emits a structured `sampling_gap` event, and exits `NO_GO` immediately if a
+gap exceeds the release limit. It also skips missed cadence boundaries instead
+of writing burst catch-up samples after wake.
+
+If the process is interrupted without violating the sampling-gap limit, rerun
+the same command with `--resume`. The state and append-only event stream survive
+process restarts. A fatal sampling gap is permanent evidence for that
+qualification and cannot be repaired by resuming; start a fresh output
+directory and qualification clock after correcting the host interruption.
 
 The automatic drills restart the worker, restart Redis, and create and restore
 a control-plane backup into a disposable database. It also disconnects the
@@ -124,7 +135,7 @@ the staffed approval timestamp must follow completion of the minimum duration.
 Pass the protected evidence file to the final resume:
 
 ```bash
-venv/bin/python scripts/staging_soak.py \
+scripts/run_staging_soak.sh \
   --duration-hours 24 \
   --resume \
   --base-url https://staging.dbtune.example \

@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from scripts import staging_init
 from scripts.staging_init import replace_value
 from scripts.staging_preflight import (
@@ -21,13 +23,17 @@ from scripts.staging_preflight import (
 )
 from scripts.staging_soak import (
     SoakState,
+    acquire_soak_lock,
     classify_decision,
     external_gates,
+    maximum_allowed_sample_gap,
+    next_sample_deadline,
     production_tls_mode,
     release_identity,
     run_drill,
     running_image_manifest,
     sampling_coverage,
+    sampling_gap_evidence,
     tls_peer_evidence,
     verify_database_roles,
     verify_target_database_roles,
@@ -263,6 +269,13 @@ def test_soak_state_is_resumable(tmp_path, monkeypatch):
     initial.ready_samples = 99
     initial.last_sample_epoch = initial.started_at_epoch + 300
     initial.max_sample_gap_seconds = 31.5
+    initial.sampling_gap_count = 1
+    initial.missed_sample_intervals = 31
+    initial.fatal_sampling_gap = {
+        "kind": "sampling_gap",
+        "fatal": True,
+        "gap_seconds": 938.055,
+    }
     initial.save(state_path)
 
     restored = SoakState.load_or_create(state_path, 86400, resume=True)
@@ -273,6 +286,9 @@ def test_soak_state_is_resumable(tmp_path, monkeypatch):
     assert restored.ready_samples == 99
     assert restored.last_sample_epoch == initial.started_at_epoch + 300
     assert restored.max_sample_gap_seconds == 31.5
+    assert restored.sampling_gap_count == 1
+    assert restored.missed_sample_intervals == 31
+    assert restored.fatal_sampling_gap == initial.fatal_sampling_gap
     assert restored.started_at_epoch == initial.started_at_epoch
     assert restored.release_sha == "abc123"
     assert restored.release_branch == "codex/release"
@@ -377,6 +393,44 @@ def test_sampling_coverage_exposes_sleep_or_monitoring_gaps():
     assert expected == 2880
     assert sleeping_ratio == 1920 / 2880
     assert sleeping_ratio < 0.995
+
+
+def test_sampling_gap_is_explicit_and_permanently_fatal():
+    assert maximum_allowed_sample_gap(30) == 90
+    assert sampling_gap_evidence(100, 190, 30) is None
+    assert sampling_gap_evidence(100, 1038.055, 30) == {
+        "gap_seconds": 938.055,
+        "maximum_allowed_gap_seconds": 90.0,
+        "missed_sample_intervals": 31,
+    }
+
+
+def test_next_sample_deadline_skips_burst_catch_up_after_sleep():
+    next_deadline = next_sample_deadline(100, 1038.055, 30)
+    assert next_deadline == 1060
+    assert next_deadline > 1038.055
+    assert next_deadline - 1038.055 <= 30
+
+
+def test_soak_output_directory_allows_only_one_runner(tmp_path):
+    first = acquire_soak_lock(tmp_path)
+    try:
+        with pytest.raises(RuntimeError, match="another staging soak runner owns"):
+            acquire_soak_lock(tmp_path)
+    finally:
+        first.close()
+
+    second = acquire_soak_lock(tmp_path)
+    second.close()
+
+
+def test_macos_soak_wrapper_prevents_idle_sleep():
+    root = Path(__file__).resolve().parents[1]
+    wrapper = (root / "scripts" / "run_staging_soak.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'if [[ "$(uname -s)" == "Darwin" ]]' in wrapper
+    assert 'exec caffeinate -ims "$PYTHON"' in wrapper
 
 
 def test_external_gates_are_structured_and_bound_to_release(tmp_path):

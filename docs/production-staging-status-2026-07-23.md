@@ -2,12 +2,14 @@
 
 ## Decision
 
-**PENDING QUALIFICATION — not approved for production target writes.**
+**NO-GO — not approved for production target writes.**
 
-The release candidate is ready for a real 24-72 hour staging soak. The local
-production-like mechanics checkpoint passed, but it intentionally cannot
-produce a `GO` decision before the 24-hour minimum and the external operator
-drills complete.
+The corrected `c5019c9` candidate is ready for a fresh real 24-72 hour staging
+soak. The earlier `7f39afd` mechanics candidate completed its elapsed
+qualification window and all six failure drills, but its final decision was
+`NO_GO` because the sampler was not continuous. No local result can produce a
+production `GO` before the corrected candidate, external operator gates, and
+staffed review all complete.
 
 ## Verified in the live local staging stack
 
@@ -86,9 +88,45 @@ caps the generator at half a CPU and 128 MB. Under the bounded mixed workload:
   median temporary writes increasing from 6,606 to 55,170 blocks. Rollback
   returned to 106.9 ms and the drill restored the exact pre-drill source.
 
+## Full mechanics-soak audit — 2026-07-25
+
+The unchanged `7f39afd` mechanics candidate ran for 86,959.941 elapsed seconds.
+All six drills passed, every collected readiness sample was ready, and the
+ledger advanced from 1,349,202 to 1,659,132 rows (+309,930). The final live
+audit observed 1,662,088 rows, no unresolved Prometheus or Alertmanager alerts,
+one unambiguous Host Agent lease, an empty agent buffer, disabled production
+write interlocks, and exact restoration of `work_mem=64kB` from
+`postgresql.conf` with no managed tuning file left behind.
+
+The local backup was 154,287,010 bytes and its recorded SHA-256 checksum
+verified. A second disposable local restore contained all 19 migrations and 31
+public tables. This remains local recovery evidence, not the required off-host
+restore.
+
+The final mechanics decision was correctly `NO_GO`. The runner recorded 2,779
+of 2,880 expected samples (96.4931%) and a 960.383-second maximum gap against a
+90-second limit. The event stream contains three 15-16 minute suspension gaps
+of 938.055, 960.384, and 955.692 seconds. Each wake was followed by a second
+sample within 0.201 seconds or less, showing the previous catch-up scheduling
+behavior. Readiness of the samples that did run was 100%, but that cannot
+substitute for continuous observation.
+
+The corrected runner now:
+
+- uses a macOS `caffeinate` assertion through `run_staging_soak.sh`;
+- holds an exclusive output-directory lock to reject concurrent samplers;
+- writes a structured fatal `sampling_gap` event and exits `NO_GO` immediately
+  after any permanently disqualifying gap; and
+- advances to the next future cadence boundary instead of emitting burst
+  catch-up samples after a host pause.
+
+Resuming preserves evidence but cannot erase a fatal gap. A fresh output
+directory and qualification clock are required after correcting the host
+interruption.
+
 ## Automated release evidence
 
-- Backend: 656 passed, 5 skipped.
+- Backend: 660 passed, 5 skipped.
 - Ruff: passed.
 - Strict type checking for the new staging/release modules: passed.
 - Frontend lint and production build: passed.
@@ -126,8 +164,9 @@ behavior only, not the required off-host gate.
 ## Remaining production blockers
 
 The `7f39afd` local mechanics soak predates control-plane database-role
-separation. It remains useful failure-drill evidence, but cannot qualify the
-corrected release artifact.
+separation and also failed its sampling-continuity SLO. It remains useful
+failure-drill and fail-closed evidence, but cannot qualify the corrected
+release artifact.
 
 1. Run the corrected least-privilege release candidate continuously for at
    least 24 hours in an isolated routable staging host using real TLS and a
