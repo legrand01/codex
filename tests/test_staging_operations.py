@@ -433,6 +433,24 @@ def test_macos_soak_wrapper_prevents_idle_sleep():
     assert 'exec caffeinate -ims "$PYTHON"' in wrapper
 
 
+def test_docker_context_excludes_host_dependencies_secrets_and_evidence():
+    root = Path(__file__).resolve().parents[1]
+    ignored = {
+        line.strip()
+        for line in (root / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    assert {
+        ".git",
+        ".env.*",
+        ".staging",
+        "artifacts",
+        "venv",
+        "frontend/node_modules",
+        "frontend/dist",
+    } <= ignored
+
+
 def test_external_gates_are_structured_and_bound_to_release(tmp_path):
     path = tmp_path / "external.json"
     release_sha = "a" * 40

@@ -126,7 +126,7 @@ interruption.
 
 ## Automated release evidence
 
-- Backend: 660 passed, 5 skipped.
+- Backend: 661 passed, 5 skipped.
 - Ruff: passed.
 - Strict type checking for the new staging/release modules: passed.
 - Frontend lint and production build: passed.
